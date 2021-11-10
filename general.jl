@@ -128,7 +128,8 @@ function compute_f_Y_frob_matrixcomp(
     return Dict(
         "model" => model,
         "objective" => objective_value(model),
-        "α" => value.(α) .* indices
+        "α" => value.(α) .* indices,
+        "H" => -(value.(α) * value.(α)') .* (γ / 2),
     )
 end
 
@@ -136,8 +137,7 @@ end
 @doc raw"""
 This function takes the matrix H and returns a new matrix H + δ_matrix that is positive definite, by some margin.
 """
-function make_matrix_posdef(H; tol = 1e-3, kind = "loose")
-    # TODO: for the "loose" case, what about just subtracting I * (the most negative eigenvalue)?
+function make_matrix_posdef(H; tol = 1e-3, kind = "simple")
     if !(size(H, 1) == size(H, 2))
         error("""
         Dimension mismatch.
@@ -145,28 +145,34 @@ function make_matrix_posdef(H; tol = 1e-3, kind = "loose")
         """)
     end
 
+    (n, n) = size(H)
+
     model = Model(Mosek.Optimizer)
     if kind == "tight"
         @variable(model, δ[1:n] ≥ 0)
         @SDconstraint(model, H + Matrix(Diagonal(δ)) ≥ zeros(n, n))
         @objective(model, Min, sum(δ))
+        optimize!(model)
+        δ = JuMP.value.(δ)
+        H_new = H + Matrix(Diagonal(JuMP.value.(δ))) + tol * I
     elseif kind == "loose"
         @variable(model, δ ≥ 0)
         @SDconstraint(model, H + (δ * Matrix(1.0 * I, n, n)) ≥ zeros(n, n))
         @objective(model, Min, δ)
+        optimize!(model)
+        δ = JuMP.value.(δ)
+        H_new =  H + JuMP.value.(δ) * I + tol * I
+    elseif kind == "simple"
+        δ = LinearAlgebra.eigvals(H)[1]
+        H_new = H - δ * I + tol * I
     else
-        error("Argument kind must be 'loose' or 'tight'!")
+        error("Argument kind must be 'simple', 'loose', or 'tight'!")
     end
 
-    optimize!(model)
-
-    if kind == "tight"
-        δ_matrix = Matrix(Diagonal(JuMP.value.(δ)))
-    elseif kind == "loose"
-        δ_matrix = JuMP.value.(δ) * I
-    end
-
-    return Dict("δ" => JuMP.value.(δ), "H_new" => H + δ_matrix + tol * I)
+    return Dict(
+        "δ" => δ, 
+        "H_new" => H_new,
+    )
 end
 
 function master_problem_frob(
