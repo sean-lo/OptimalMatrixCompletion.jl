@@ -232,7 +232,7 @@ function branchandbound_frob_matrixcomp(
     γ::Float64,
     λ::Float64,
     ;
-    max_steps::Int = 1000000,
+    max_steps::Int = 10000,
     solver_output::Int = 0,
 )
 
@@ -267,8 +267,7 @@ function branchandbound_frob_matrixcomp(
         # println("U_upper: ", U_upper)
 
         # solve SDP relaxation of master problem
-        SDP_result =
-            SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
+        SDP_result = SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
         objective_SDP = SDP_result["objective"]
         Y_SDP = SDP_result["Y"]
         U_SDP = SDP_result["U"]
