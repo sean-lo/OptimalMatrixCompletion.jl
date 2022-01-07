@@ -24,6 +24,7 @@ function branchandbound_frob_matrixcomp(
     max_steps::Int = 1000000,
     time_limit::Int = 3600, # time limit in seconds
     with_log::Bool = true,
+    update_step::Int = 1000,
 )
 
     function print_output(outfile::String, printlist, with_log::Bool)
@@ -137,6 +138,7 @@ function branchandbound_frob_matrixcomp(
     ancestry = []
 
     counter = 1
+    last_updated_counter = 1    
     now_gap = 1e5
 
     while (
@@ -197,6 +199,7 @@ function branchandbound_frob_matrixcomp(
                 best_solution["MSE_out"] = compute_MSE(X_relax, A, indices, kind = "out")
                 println("better solution found!")
                 add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+                last_updated_counter = counter
             end
             prune_flag = true
         end
@@ -224,12 +227,14 @@ function branchandbound_frob_matrixcomp(
             if minimum(values(lower_bounds)) > lower
                 lower = minimum(values(lower_bounds))
                 add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+                last_updated_counter = counter
             end
         end
 
         counter += 2
-        if (counter % 1000 <= 1)
+        if ((counter ÷ update_step) > (last_updated_counter ÷ update_step))
             add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+            last_updated_counter = counter
         end
     end
 
