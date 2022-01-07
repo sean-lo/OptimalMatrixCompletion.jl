@@ -18,6 +18,7 @@ function branchandbound_frob_matrixcomp(
     γ::Float64,
     λ::Float64,
     ;
+    relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     max_steps::Int = 1000000,
     time_limit::Int = 3600, # time limit in seconds
@@ -57,11 +58,18 @@ function branchandbound_frob_matrixcomp(
         print_output(outfile, printlist, with_log)
     end
 
+    if !(relaxation in ["SDP", "SOCP"])
+        error("""
+        Invalid input for relaxation method.
+        Relaxation must be either "SDP" or "SOCP".
+        """)
+    end
+
     if !(size(A) == size(indices))
         error("""
         Dimension mismatch. 
         Input matrix A must have size (n, m);
-        Input matrix indices must have size (n, m);
+        Input matrix indices must have size (n, m).
         """)
     end
 
@@ -81,6 +89,7 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("num_indices:       %10d\n", sum(indices)),
         Printf.@sprintf("γ:                 %10g\n", γ),
         Printf.@sprintf("λ:                 %10g\n", λ),
+        Printf.@sprintf("Relaxation:        %10s\n", relaxation),
         Printf.@sprintf("Optimality gap:    %10g\n", gap),
         Printf.@sprintf("Maximum nodes:     %10d\n", max_steps),
         Printf.@sprintf("Time limit (s):    %10d\n", time_limit),
@@ -148,31 +157,41 @@ function branchandbound_frob_matrixcomp(
         end
 
         # solve SDP relaxation of master problem
-        SDP_result = SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
+        if relaxation == "SDP"
+            relax_result = @suppress SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
+        elseif relaxation == "SOCP"
+            relax_result = @suppress SOCP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
+        end
         
-        if SDP_result["feasible"] == false
+        if relax_result["feasible"] == false
             prune_flag = true
             continue
         else
-            objective_SDP = SDP_result["objective"]
-            lower_bounds[node_id] = objective_SDP
-            Y_SDP = SDP_result["Y"]
-            U_SDP = SDP_result["U"]
-            t_SDP = SDP_result["t"]
-            X_SDP = SDP_result["X"]
-            Θ_SDP = SDP_result["Θ"]
+            objective_relax = relax_result["objective"]
+            lower_bounds[node_id] = objective_relax
+            Y_relax = relax_result["Y"]
+            U_relax = relax_result["U"]
+            t_relax = relax_result["t"]
+            X_relax = relax_result["X"]
+            Θ_relax = relax_result["Θ"]
         end
 
-        # if solution for SDP_result has higher objective than best found so far: prune the node
-        if objective_SDP ≥ best_solution["objective"]
+        # if solution for relax_result has higher objective than best found so far: prune the node
+        if objective_relax ≥ best_solution["objective"]
             prune_flag = true
         end
 
-        # if solution for SDP_result is feasible for original problem:
+        # if solution for relax_result is feasible for original problem:
         # prune this node;
         # if it is the best found so far, update best_solution
-        if master_problem_frob_matrixcomp_feasible(Y_SDP, U_SDP, t_SDP, X_SDP, Θ_SDP)
+        if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, t_relax, X_relax, Θ_relax)
             # if best found so far, update best_solution
+            if objective_relax < best_solution["objective"]
+                best_solution["objective"] = objective_relax
+                upper = objective_relax
+                best_solution["Y"] = copy(Y_relax)
+                best_solution["U"] = copy(U_relax)
+                best_solution["X"] = copy(X_relax)
                 best_solution["MSE_in"] = compute_MSE(X_relax, A, indices, kind = "in")
                 best_solution["MSE_out"] = compute_MSE(X_relax, A, indices, kind = "out")
                 println("better solution found!")
@@ -371,7 +390,181 @@ function SDP_relax_frob_matrixcomp(
         + λ * sum(Y[i, i] for i = 1:n)
     )
 
-    optimize!(model)
+    @suppress optimize!(model)
+
+    if JuMP.termination_status(model) == MOI.OPTIMAL
+        return Dict(
+            "feasible" => true,
+            "objective" => objective_value(model),
+            "Y" => value.(Y),
+            "U" => value.(U),
+            "t" => value.(t),
+            "X" => value.(X),
+            "Θ" => value.(Θ),
+        )
+    else
+        return Dict(
+            "feasible" => false,
+        )
+    end
+end
+
+
+function SOCP_relax_frob_matrixcomp(
+    U_lower::Array{Float64,2},
+    U_upper::Array{Float64,2},
+    A::Array{Float64,2},
+    indices::Array{Float64,2},
+    γ::Float64,
+    λ::Float64,
+    ;
+    solver_output::Int = 0,
+)
+    if !(
+        size(U_lower) == size(U_upper) 
+        && size(U_lower, 1) == size(U_upper, 1) == size(A, 1) == size(indices, 1) 
+        && size(A) == size(indices)
+    )
+        error("""
+        Dimension mismatch. 
+        Input matrix U_lower must have size (n, k); 
+        Input matrix U_upper must have size (n, k); 
+        Input matrix A must have size (n, m);
+        Input matrix indices must have size (n, m).
+        """)
+    end
+
+    (n, k) = size(U_lower)
+    (n, m) = size(A)
+
+    model = Model(Gurobi.Optimizer)
+    # if solver_output == 0
+    #     set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
+    # end
+    set_optimizer_attribute(model, "OutputFlag", solver_output)
+
+    @variable(model, X[1:n, 1:m])
+    @variable(model, Y[1:n, 1:n])
+    @variable(model, Θ[1:m, 1:m])
+    @variable(model, U[1:n, 1:k])
+    @variable(model, t[1:n, 1:k, 1:k])
+
+    # Second-order cone constraints
+    
+    # Y[i,j]^2 <= Y[i,i] * Y[j,j]
+    for i in 1:n, j in 1:n
+        @constraint(model, [Y[i,i]; 0.5 * Y[j,j]; Y[i,j]] in RotatedSecondOrderCone())
+    end
+    
+    # X[i,j]^2 <= Y[i,i] * Θ[j,j]
+    for i in 1:n, j in 1:m 
+        @constraint(model, [Y[i,i]; 0.5 * Θ[j,j]; X[i,j]] in RotatedSecondOrderCone())
+    end
+    
+    # Θ[i,j]^2 <= Θ[i,i] * Θ[j,j]
+    for i in 1:m, j in 1:m 
+        @constraint(model, [Θ[i,i]; 0.5 * Θ[j,j]; Θ[i,j]] in RotatedSecondOrderCone())
+    end
+    
+    # Y[i,i] >= sum(U[i,j]^2 for j in 1:k)
+    for i in 1:n
+        @constraint(model, [Y[i,i]; 0.5; U[i,:]] in RotatedSecondOrderCone())
+    end
+    
+    # Adamturk and Gomez:
+    for i in 1:n, j in 1:n
+        @constraint(model, [
+            Y[i,i] + Y[j,j] + 2 * Y[i,j];
+            0.5;
+            U[i,:] + U[j,:]
+        ] in RotatedSecondOrderCone())
+        @constraint(model, [
+            Y[i,i] + Y[j,j] - 2 * Y[i,j];
+            0.5;
+            U[i,:] - U[j,:]
+        ] in RotatedSecondOrderCone())
+    end
+
+    
+    # Trace constraint on Y
+    @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
+
+    # Lower bounds and upper bounds on U
+    @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
+
+    # McCormick inequalities at U_lower and U_upper here
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≥ (
+            U_lower[i, j2] * U[i, j1] 
+            + U_lower[i, j1] * U[i, j2] 
+            - U_lower[i, j1] * U_lower[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≥ (
+            U_upper[i, j2] * U[i, j1] 
+            + U_upper[i, j1] * U[i, j2] 
+            - U_upper[i, j1] * U_upper[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≤ (
+            U_upper[i, j2] * U[i, j1] 
+            + U_lower[i, j1] * U[i, j2] 
+            - U_lower[i, j1] * U_upper[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≤ (
+            U_lower[i, j2] * U[i, j1] 
+            + U_upper[i, j1] * U[i, j2] 
+            - U_upper[i, j1] * U_lower[i, j2]
+        )
+    )
+
+    # Orthogonality constraints U'U = I using new variables
+    for j1 = 1:k, j2 = 1:k
+        if (j1 == j2)
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + 1e-6
+            )
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - 1e-6
+            )
+        else
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≤   1e-6
+            )
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≥ - 1e-6
+            )
+        end
+    end
+
+    @objective(
+        model,
+        Min,
+        (1 / 2) * sum(
+            (X[i, j] - A[i, j])^2 * indices[i, j] 
+            for i = 1:n, j = 1:m
+        ) 
+        + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
+        + λ * sum(Y[i, i] for i = 1:n)
+    )
+
+    @suppress optimize!(model)
 
     if JuMP.termination_status(model) == MOI.OPTIMAL
         return Dict(
