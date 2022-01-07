@@ -138,6 +138,11 @@ function branchandbound_frob_matrixcomp(
 
         prune_flag = false
 
+        if !feasibility_check_U(U_lower, U_upper)
+            prune_flag = true
+            continue
+        end
+
         # solve SDP relaxation of master problem
         SDP_result = SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
         
@@ -498,4 +503,30 @@ function objective_function(
         + (1 / (2 * γ)) * sum(X.^2)
         + λ * sum(U.^2)
     )
+end
+
+function feasibility_check_U(U_lower, U_upper)
+    (n, k) = size(U_lower)
+    U_max = max.(abs.(U_lower .- 0), abs.(U_upper .- 0))
+    if !all(
+        sum(U_max[:,i].^2) ≥ 1
+        for i in 1:size(U_max, 2)
+    )
+        return false
+    end
+    U_min = zeros(n, k)
+    for i in 1:n, j in 1:k
+        if U_lower[i,j] ≤ 0 ≤ U_upper[i,j]
+            U_min[i,j] = 0
+        else
+            U_min[i,j] = min(abs(U_lower[i,j] - 0), abs(U_upper[i,j] - 0))
+        end
+    end
+    if !all(
+        sum(U_min[:,i].^2) ≤ 1
+        for i in 1:size(U_min, 2)
+    )
+        return false
+    end
+    return true
 end
