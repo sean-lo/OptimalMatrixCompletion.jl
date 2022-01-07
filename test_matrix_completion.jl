@@ -1,4 +1,5 @@
 using Test
+using Random
 
 include("matrix_completion.jl")
 include("utils.jl")
@@ -100,6 +101,46 @@ result = test_SDP_relax_frob_matrixcomp(
     result["Θ"],
 ))
 
+function test_SOCP_relax_frob_matrixcomp(
+    k::Int,
+    m::Int,
+    n::Int,
+    n_indices::Int,
+    seed::Int,
+    U_lower::Array{Float64,2},
+    U_upper::Array{Float64,2},
+    ;
+    γ::Float64 = 10.0,
+    λ::Float64 = 1.0,
+    solver_output::Int = 1,
+)
+    if n_indices < (n + m) * k
+        error("""
+        System is under-determined. 
+        n_indices must be at least (n + m) * k.
+        """)
+    end
+    if n_indices > n * m
+        error("""
+        Cannot generate random indices of length more than the size of matrix A.
+        """)
+    end
+    Random.seed!(seed)
+    A = randn(Float64, (n, m))
+    indices = generate_masked_bitmatrix(n, m, n_indices)
+
+    return SOCP_relax_frob_matrixcomp(
+        U_lower,
+        U_upper,
+        A,
+        indices,
+        γ,
+        λ,
+        ;
+        solver_output = solver_output,
+    )
+end
+
 function test_alternating_minimization(
     k::Int,
     m::Int,
@@ -142,6 +183,7 @@ function test_branchandbound_frob_matrixcomp(
     ;
     γ::Float64 = 1.0,
     λ::Float64 = 1.0,
+    relaxation::String = "SDP",
     max_steps::Int = 10000,
     time_limit::Int = 3600,
 )
@@ -167,6 +209,7 @@ function test_branchandbound_frob_matrixcomp(
         γ,
         λ,
         ;
+        relaxation = relaxation,
         max_steps = max_steps,
         time_limit = time_limit,
     )
