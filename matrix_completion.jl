@@ -104,12 +104,16 @@ function branchandbound_frob_matrixcomp(
     objective_initial = objective_function(
         X_initial, A, indices, U_initial, γ, λ,
     )
+    MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
+    MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
     
     best_solution = Dict(
         "objective" => objective_initial, 
         "Y" => Y_initial,
         "U" => U_initial,
         "X" => X_initial,
+        "MSE_in" => MSE_in_initial,
+        "MSE_out" => MSE_out_initial,
     )
 
     U_lower_initial = -ones(n, k)
@@ -169,12 +173,8 @@ function branchandbound_frob_matrixcomp(
         # if it is the best found so far, update best_solution
         if master_problem_frob_matrixcomp_feasible(Y_SDP, U_SDP, t_SDP, X_SDP, Θ_SDP)
             # if best found so far, update best_solution
-            if objective_SDP < best_solution["objective"]
-                best_solution["objective"] = objective_SDP
-                upper = objective_SDP
-                best_solution["Y"] = copy(Y_SDP)
-                best_solution["U"] = copy(U_SDP)
-                best_solution["X"] = copy(X_SDP)
+                best_solution["MSE_in"] = compute_MSE(X_relax, A, indices, kind = "in")
+                best_solution["MSE_out"] = compute_MSE(X_relax, A, indices, kind = "out")
                 println("better solution found!")
                 add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
             end
@@ -215,6 +215,10 @@ function branchandbound_frob_matrixcomp(
 
     if with_log
         open(outfile, "a+") do f
+            print(f, "\n\nMSE of sampled entries (warm start):\n")
+            show(f, "text/plain", MSE_in_initial)
+            print(f, "\n\nMSE of unsampled entries (warm start):\n")
+            show(f, "text/plain", MSE_out_initial)
             print(f, "\n\nU:\n")
             show(f, "text/plain", best_solution["U"])
             print(f, "\n\nY:\n")
@@ -227,6 +231,10 @@ function branchandbound_frob_matrixcomp(
             show(f, "text/plain", indices)
             print(f, "\n\nBest incumbent solution:\n")
             show(f, "text/plain", best_solution["objective"])
+            print(f, "\n\nMSE of sampled entries:\n")
+            show(f, "text/plain", best_solution["MSE_in"])
+            print(f, "\n\nMSE of unsampled entries:\n")
+            show(f, "text/plain", best_solution["MSE_out"])
         end
     end
 
@@ -530,3 +538,28 @@ function feasibility_check_U(U_lower, U_upper)
     end
     return true
 end
+
+function compute_MSE(X, A, indices; kind = "out")
+    """Computes MSE of entries in `X` and `A` that are not in `indices`."""
+    if kind == "out"
+        if length(indices) == sum(indices)
+            return 0.0
+        else
+            return sum((X - A).^2 .* (1 .- indices)) / (length(indices) - sum(indices))
+        end
+    elseif kind == "in"
+        if sum(indices) == 0.0
+            return 0.0
+        else
+            return sum((X - A).^2 .* indices) / sum(indices)
+        end
+    elseif kind == "all"
+        return sum((X - A).^2) / length(indices)
+    else
+        error("""
+        Input argument `kind` not recognized!
+        Must be one of "out", "in", or "all".
+        """)
+    end
+end
+
