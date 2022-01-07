@@ -4,6 +4,7 @@ using Compat
 
 using Printf
 using Dates
+using Suppressor
 
 using JuMP
 using MathOptInterface
@@ -102,7 +103,7 @@ function branchandbound_frob_matrixcomp(
     start_time = time()
 
     # TODO: better initial Us?
-    U_altmin, V_altmin = alternating_minimization(
+    U_altmin, V_altmin = @suppress alternating_minimization(
         A, k, indices, γ, λ,
     )
     # do a re-SVD on U * V in order to recover orthonormal U
@@ -607,14 +608,14 @@ function alternating_minimization(
                     sum(U[i,k] * W_current[k,j] for k in 1:m) 
                     - A[i,j]
                 )^2 * indices[i,j]
-                for i = 1:n, j = 1:m
+                for i in 1:n, j in 1:m
             )
             + (1 / (2 * γ)) * sum(
                 sum(U[i,k] * W_current[k,j] for k in 1:m)^2
                 for i in 1:n, j in 1:m
             )
         )
-        optimize!(model)
+        @suppress optimize!(model)
         return value.(U), objective_value(model)
     end
 
@@ -632,14 +633,14 @@ function alternating_minimization(
                     sum(U_current[i,k] * W[k,j] for k in 1:m) 
                     - A[i,j]
                 )^2 * indices[i,j]
-                for i = 1:n, j = 1:m
+                for i in 1:n, j in 1:m
             )
             + (1 / (2 * γ)) * sum(
                 sum(U_current[i,k] * W[k,j] for k in 1:m)^2
                 for i in 1:n, j in 1:m
             )
         )
-        optimize!(model)
+        @suppress optimize!(model)
         return value.(W), objective_value(model)
     end
 
