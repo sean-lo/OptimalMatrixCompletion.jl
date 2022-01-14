@@ -137,6 +137,7 @@ function branchandbound_frob_matrixcomp(
     lower_bounds = Dict()
     ancestry = []
 
+    node_id = 1
     counter = 1
     last_updated_counter = 1    
     now_gap = 1e5
@@ -149,6 +150,7 @@ function branchandbound_frob_matrixcomp(
         if length(nodes) != 0
             (U_lower, U_upper, node_id) = popfirst!(nodes)
         else
+            add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
             break
         end
 
@@ -161,8 +163,20 @@ function branchandbound_frob_matrixcomp(
 
         # solve SDP relaxation of master problem
         if relaxation == "SDP"
+            if !(
+                @suppress SDP_relax_feasibility_frob_matrixcomp(U_lower, U_upper)
+            )
+                prune_flag = true
+                continue
+            end
             relax_result = @suppress SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
         elseif relaxation == "SOCP"
+            if !(
+                @suppress SOCP_relax_feasibility_frob_matrixcomp(U_lower, U_upper)
+            )
+                prune_flag = true
+                continue
+            end
             relax_result = @suppress SOCP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
         end
         
@@ -271,6 +285,9 @@ function master_problem_frob_matrixcomp_feasible(Y, U, t, X, Θ)
     if !(all(abs.(U' * U - I) .≤ 1e-5))
         return false
     end
+    if sum(Y[i,i] for i in 1:size(Y, 1)) > size(U, 2)
+        return false
+    end
     if !(eigvals(Symmetric(Y - U * U'), 1:1)[1] ≥ -1e-6)
         return false
     end
@@ -278,6 +295,110 @@ function master_problem_frob_matrixcomp_feasible(Y, U, t, X, Θ)
         return false
     end
     return true
+end
+
+function SDP_relax_feasibility_frob_matrixcomp(
+    U_lower::Array{Float64,2},
+    U_upper::Array{Float64,2},
+)
+    if !(
+        size(U_lower) == size(U_upper)
+    )
+        error("""
+        Dimension mismatch. 
+        Input matrix U_lower must have size (n, k); 
+        Input matrix U_upper must have size (n, k).
+        """)
+    end
+
+    (n, k) = size(U_lower)
+
+    model = Model(Mosek.Optimizer)
+    set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
+
+    # @variable(model, X[1:n, 1:m])
+    @variable(model, Y[1:n, 1:n], Symmetric)
+    # @variable(model, Θ[1:m, 1:m], Symmetric)
+    @variable(model, U[1:n, 1:k])
+    @variable(model, t[1:n, 1:k, 1:k])
+
+    # Lower bounds and upper bounds on U
+    @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
+
+    # McCormick inequalities at U_lower and U_upper here
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≥ (
+            U_lower[i, j2] * U[i, j1] 
+            + U_lower[i, j1] * U[i, j2] 
+            - U_lower[i, j1] * U_lower[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≥ (
+            U_upper[i, j2] * U[i, j1] 
+            + U_upper[i, j1] * U[i, j2] 
+            - U_upper[i, j1] * U_upper[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≤ (
+            U_upper[i, j2] * U[i, j1] 
+            + U_lower[i, j1] * U[i, j2] 
+            - U_lower[i, j1] * U_upper[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≤ (
+            U_lower[i, j2] * U[i, j1] 
+            + U_upper[i, j1] * U[i, j2] 
+            - U_upper[i, j1] * U_lower[i, j2]
+        )
+    )
+
+    # Orthogonality constraints U'U = I using new variables
+    for j1 = 1:k, j2 = 1:k
+        if (j1 == j2)
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + 1e-6
+            )
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - 1e-6
+            )
+        else
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≤   1e-6
+            )
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≥ - 1e-6
+            )
+        end
+    end
+
+    # @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
+    @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
+    @constraint(model, I - Y in PSDCone())
+
+    @objective(
+        model,
+        Min,
+        0
+    )
+
+    @suppress optimize!(model)
+
+    return (JuMP.termination_status(model) == MOI.OPTIMAL)
 end
 
 function SDP_relax_frob_matrixcomp(
@@ -314,15 +435,18 @@ function SDP_relax_frob_matrixcomp(
     # set_optimizer_attribute(model, "OutputFlag", solver_output)
 
     @variable(model, X[1:n, 1:m])
-    @variable(model, Y[1:n, 1:n])
-    @variable(model, Θ[1:m, 1:m])
+    @variable(model, Y[1:n, 1:n], Symmetric)
+    @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
 
     @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
     @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
 
-    @constraint(model, I - Y in PSDCone())
+    @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
+
+    # Lower bounds and upper bounds on U
+    @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
 
     # McCormick inequalities at U_lower and U_upper here
     @constraint(
@@ -415,6 +539,144 @@ function SDP_relax_frob_matrixcomp(
     end
 end
 
+function SOCP_relax_feasibility_frob_matrixcomp(
+    U_lower::Array{Float64,2},
+    U_upper::Array{Float64,2},
+)
+    if !(
+        size(U_lower) == size(U_upper)
+    )
+        error("""
+        Dimension mismatch. 
+        Input matrix U_lower must have size (n, k); 
+        Input matrix U_upper must have size (n, k).
+        """)
+    end
+
+    (n, k) = size(U_lower)
+
+    model = Model(Gurobi.Optimizer)
+    set_optimizer_attribute(model, "OutputFlag", 0)
+
+    # @variable(model, X[1:n, 1:m])
+    @variable(model, Y[1:n, 1:n], Symmetric)
+    # @variable(model, Θ[1:m, 1:m], Symmetric)
+    @variable(model, U[1:n, 1:k])
+    @variable(model, t[1:n, 1:k, 1:k])
+
+    # Lower bounds and upper bounds on U
+    @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
+
+    # McCormick inequalities at U_lower and U_upper here
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≥ (
+            U_lower[i, j2] * U[i, j1] 
+            + U_lower[i, j1] * U[i, j2] 
+            - U_lower[i, j1] * U_lower[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≥ (
+            U_upper[i, j2] * U[i, j1] 
+            + U_upper[i, j1] * U[i, j2] 
+            - U_upper[i, j1] * U_upper[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≤ (
+            U_upper[i, j2] * U[i, j1] 
+            + U_lower[i, j1] * U[i, j2] 
+            - U_lower[i, j1] * U_upper[i, j2]
+        )
+    )
+    @constraint(
+        model,
+        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        t[i, j1, j2] ≤ (
+            U_lower[i, j2] * U[i, j1] 
+            + U_upper[i, j1] * U[i, j2] 
+            - U_upper[i, j1] * U_lower[i, j2]
+        )
+    )
+
+    # Orthogonality constraints U'U = I using new variables
+    for j1 = 1:k, j2 = 1:k
+        if (j1 == j2)
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + 1e-6
+            )
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - 1e-6
+            )
+        else
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≤   1e-6
+            )
+            @constraint(
+                model,
+                sum(t[i, j1, j2] for i = 1:n) ≥ - 1e-6
+            )
+        end
+    end
+
+    # Second-order cone constraints
+    
+    # Y[i,j]^2 <= Y[i,i] * Y[j,j]
+    for i in 1:n, j in 1:n
+        @constraint(model, [Y[i,i]; 0.5 * Y[j,j]; Y[i,j]] in RotatedSecondOrderCone())
+    end
+    
+    # X[i,j]^2 <= Y[i,i] * Θ[j,j]
+    # for i in 1:n, j in 1:m 
+    #     @constraint(model, [Y[i,i]; 0.5 * Θ[j,j]; X[i,j]] in RotatedSecondOrderCone())
+    # end
+    
+    # Θ[i,j]^2 <= Θ[i,i] * Θ[j,j]
+    # for i in 1:m, j in 1:m 
+    #     @constraint(model, [Θ[i,i]; 0.5 * Θ[j,j]; Θ[i,j]] in RotatedSecondOrderCone())
+    # end
+    
+    # Y[i,i] >= sum(U[i,j]^2 for j in 1:k)
+    for i in 1:n
+        @constraint(model, [Y[i,i]; 0.5; U[i,:]] in RotatedSecondOrderCone())
+    end
+    
+    # Adamturk and Gomez:
+    for i in 1:n, j in 1:n
+        @constraint(model, [
+            Y[i,i] + Y[j,j] + 2 * Y[i,j];
+            0.5;
+            U[i,:] + U[j,:]
+        ] in RotatedSecondOrderCone())
+        @constraint(model, [
+            Y[i,i] + Y[j,j] - 2 * Y[i,j];
+            0.5;
+            U[i,:] - U[j,:]
+        ] in RotatedSecondOrderCone())
+    end
+
+    # Trace constraint on Y
+    @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
+
+    @objective(
+        model,
+        Min,
+        0
+    )
+
+    @suppress optimize!(model)
+
+    return (JuMP.termination_status(model) == MOI.OPTIMAL)
+end
 
 function SOCP_relax_frob_matrixcomp(
     U_lower::Array{Float64,2},
@@ -450,13 +712,15 @@ function SOCP_relax_frob_matrixcomp(
     set_optimizer_attribute(model, "OutputFlag", solver_output)
 
     @variable(model, X[1:n, 1:m])
-    @variable(model, Y[1:n, 1:n])
-    @variable(model, Θ[1:m, 1:m])
+    @variable(model, Y[1:n, 1:n], Symmetric)
+    @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
 
     # Second-order cone constraints
     
+    # TODO: see if can improve these by knowledge on bounds on U
+
     # Y[i,j]^2 <= Y[i,i] * Y[j,j]
     for i in 1:n, j in 1:n
         @constraint(model, [Y[i,i]; 0.5 * Y[j,j]; Y[i,j]] in RotatedSecondOrderCone())
@@ -476,7 +740,9 @@ function SOCP_relax_frob_matrixcomp(
     for i in 1:n
         @constraint(model, [Y[i,i]; 0.5; U[i,:]] in RotatedSecondOrderCone())
     end
-    
+
+    # TODO: see if can improve these (McCormick-like) by knowledge on bounds on U
+
     # Adamturk and Gomez:
     for i in 1:n, j in 1:n
         @constraint(model, [
