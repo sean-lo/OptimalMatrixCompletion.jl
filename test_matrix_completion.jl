@@ -217,18 +217,75 @@ end
 
 include("matrix_completion.jl")
 
-result = test_branchandbound_frob_matrixcomp(1,3,4,8,1, time_limit = 120, max_steps = 100000000)
+result = test_branchandbound_frob_matrixcomp(1,3,4,8,1, time_limit = 120, max_steps = 10000)
 
+result = test_branchandbound_frob_matrixcomp(1,3,4,8,1; time_limit = 120, max_steps = 10000, relaxation = "SOCP")
 
-result = test_branchandbound_frob_matrixcomp(1,3,5,9,0, max_steps = 10000, time_limit = 600)
+result = test_branchandbound_frob_matrixcomp(1,3,5,9,0, max_steps = 100000, time_limit = 120)
 
-result = test_branchandbound_frob_matrixcomp(1,3,4,8,0)
+result = test_branchandbound_frob_matrixcomp(1,3,5,9,0, max_steps = 100000, time_limit = 120, relaxation = "SOCP")
 
-result = test_branchandbound_frob_matrixcomp(1,3,4,8,0, time_limit = 120, max_steps = 100000000)
+for seed in 1:5
+    # test_branchandbound_frob_matrixcomp(1,3,5,9,0, max_steps = 100000, time_limit = 120, relaxation = "SDP")
+    test_branchandbound_frob_matrixcomp(1,3,5,9, seed, max_steps = 100000, time_limit = 240, relaxation = "SOCP")
+end
 
-result = test_branchandbound_frob_matrixcomp(1,5,6,24,0, max_steps = 200000, time_limit = 300)
+result = test_branchandbound_frob_matrixcomp(1,5,6,24,0, max_steps = 200000, time_limit = 600)
+
+result = test_branchandbound_frob_matrixcomp(1,5,6,24,0, max_steps = 200000, time_limit = 600, relaxation = "SOCP")
+
+result = test_branchandbound_frob_matrixcomp(1,10,15,50,0, max_steps = 200000, time_limit = 3600)
+
+result = test_branchandbound_frob_matrixcomp(1,10,15,50,0, max_steps = 200000, time_limit = 3600, relaxation = "SOCP")
+
+for seed in 1:5
+    test_branchandbound_frob_matrixcomp(1,10,15,50,seed, max_steps = 100000, time_limit = 360, relaxation = "SDP")
+    test_branchandbound_frob_matrixcomp(1,10,15,50,seed,max_steps = 100000, time_limit = 360, relaxation = "SOCP")
+end
+
 result = test_branchandbound_frob_matrixcomp(1,5,6,24,1, max_steps = 200000, time_limit = 300)
+result = test_branchandbound_frob_matrixcomp(1,5,6,24,1, max_steps = 200000, time_limit = 300, relaxation = "SOCP")
 
-result = test_branchandbound_frob_matrixcomp(2,5,6,24,0, max_steps = 200000, time_limit = 300)
+result["U"]
+
+result["Y"] ≈ result["U"] * result["U"]'
+result["Y"] - result["U"] * result["U"]'
+
+svd(result["Y"])
+
+eigvals(result["Y"] - result["U"] * result["U"]')
+
+isposdef(Symmetric(result["Y"] - result["U"] * result["U"]'))
+
+tr(result["U"] * result["U"]')
+tr(result["Y"])
+
+result = test_branchandbound_frob_matrixcomp(1,50,100,500,0, max_steps = 200000, time_limit = 600, relaxation = "SOCP")
+result = test_branchandbound_frob_matrixcomp(1,50,100,500,0, max_steps = 200000, time_limit = 600, relaxation = "SDP")
+
+for seed in 1:5
+    test_branchandbound_frob_matrixcomp(1,50,100,500,seed, max_steps = 200000, time_limit = 600, relaxation = "SOCP")
+    test_branchandbound_frob_matrixcomp(1,50,100,500,seed, max_steps = 200000, time_limit = 600, relaxation = "SDP")
+end
+
+result = test_branchandbound_frob_matrixcomp(2,5,6,24,0, max_steps = 200000, time_limit = 600)
+
+result["U"]
+
+result["Y"] ≈ result["U"] * result["U"]'
+
+svd(result["Y"])
+
+eigvals(result["Y"] - result["U"] * result["U"]')
+
+isposdef(Symmetric(result["Y"] - result["U"] * result["U"]') + 1e-6 * I)
+
+tr(result["U"] * result["U"]')
+tr(result["Y"])
+
+
 result = test_branchandbound_frob_matrixcomp(2,5,6,24,1, max_steps = 200000, time_limit = 300)
 
+result = test_branchandbound_frob_matrixcomp(5,20,30,400,1, max_steps = 200000, time_limit = 300)
+
+result = test_branchandbound_frob_matrixcomp(10,50,60,1400,1, max_steps = 20000000000, time_limit = 300)
