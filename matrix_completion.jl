@@ -330,9 +330,6 @@ function SDP_relax_feasibility_frob_matrixcomp(
     model = Model(Mosek.Optimizer)
     set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
 
-    # @variable(model, X[1:n, 1:m])
-    @variable(model, Y[1:n, 1:n], Symmetric)
-    # @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
 
@@ -399,10 +396,6 @@ function SDP_relax_feasibility_frob_matrixcomp(
             )
         end
     end
-
-    # @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
-    @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
-    @constraint(model, I - Y in PSDCone())
 
     @objective(
         model,
@@ -572,9 +565,6 @@ function SOCP_relax_feasibility_frob_matrixcomp(
     model = Model(Gurobi.Optimizer)
     set_optimizer_attribute(model, "OutputFlag", 0)
 
-    # @variable(model, X[1:n, 1:m])
-    @variable(model, Y[1:n, 1:n], Symmetric)
-    # @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
 
@@ -641,45 +631,6 @@ function SOCP_relax_feasibility_frob_matrixcomp(
             )
         end
     end
-
-    # Second-order cone constraints
-    
-    # Y[i,j]^2 <= Y[i,i] * Y[j,j]
-    for i in 1:n, j in 1:n
-        @constraint(model, [Y[i,i]; 0.5 * Y[j,j]; Y[i,j]] in RotatedSecondOrderCone())
-    end
-    
-    # X[i,j]^2 <= Y[i,i] * Θ[j,j]
-    # for i in 1:n, j in 1:m 
-    #     @constraint(model, [Y[i,i]; 0.5 * Θ[j,j]; X[i,j]] in RotatedSecondOrderCone())
-    # end
-    
-    # Θ[i,j]^2 <= Θ[i,i] * Θ[j,j]
-    # for i in 1:m, j in 1:m 
-    #     @constraint(model, [Θ[i,i]; 0.5 * Θ[j,j]; Θ[i,j]] in RotatedSecondOrderCone())
-    # end
-    
-    # Y[i,i] >= sum(U[i,j]^2 for j in 1:k)
-    for i in 1:n
-        @constraint(model, [Y[i,i]; 0.5; U[i,:]] in RotatedSecondOrderCone())
-    end
-    
-    # Adamturk and Gomez:
-    for i in 1:n, j in 1:n
-        @constraint(model, [
-            Y[i,i] + Y[j,j] + 2 * Y[i,j];
-            0.5;
-            U[i,:] + U[j,:]
-        ] in RotatedSecondOrderCone())
-        @constraint(model, [
-            Y[i,i] + Y[j,j] - 2 * Y[i,j];
-            0.5;
-            U[i,:] - U[j,:]
-        ] in RotatedSecondOrderCone())
-    end
-
-    # Trace constraint on Y
-    @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
 
     @objective(
         model,
