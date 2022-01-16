@@ -157,27 +157,19 @@ function branchandbound_frob_matrixcomp(
 
         prune_flag = false
 
-        if !feasibility_check_U(U_lower, U_upper)
+        if !(
+            @suppress relax_feasibility_frob_matrixcomp(
+                U_lower, U_upper, relaxation
+            )
+        )
             prune_flag = true
             continue
         end
 
         # solve SDP relaxation of master problem
         if relaxation == "SDP"
-            if !(
-                @suppress SDP_relax_feasibility_frob_matrixcomp(U_lower, U_upper)
-            )
-                prune_flag = true
-                continue
-            end
             relax_result = @suppress SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
         elseif relaxation == "SOCP"
-            if !(
-                @suppress SOCP_relax_feasibility_frob_matrixcomp(U_lower, U_upper)
-            )
-                prune_flag = true
-                continue
-            end
             relax_result = @suppress SOCP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
         end
         
@@ -311,9 +303,10 @@ function master_problem_frob_matrixcomp_feasible(Y, U, t, X, Θ)
     return true
 end
 
-function SDP_relax_feasibility_frob_matrixcomp(
+function relax_feasibility_frob_matrixcomp(
     U_lower::Array{Float64,2},
     U_upper::Array{Float64,2},
+    relaxation::String,
 )
     if !(
         size(U_lower) == size(U_upper)
@@ -327,8 +320,17 @@ function SDP_relax_feasibility_frob_matrixcomp(
 
     (n, k) = size(U_lower)
 
-    model = Model(Mosek.Optimizer)
-    set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
+    if relaxation == "SDP"
+        model = Model(Mosek.Optimizer)
+        set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
+    elseif relaxation == "SOCP"
+        model = Model(Gurobi.Optimizer)
+        set_optimizer_attribute(model, "OutputFlag", 0)
+    else
+        error("""
+        relaxation must be either "SDP" or "SOCP"!
+        """)
+    end
 
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
@@ -544,103 +546,6 @@ function SDP_relax_frob_matrixcomp(
             "feasible" => false,
         )
     end
-end
-
-function SOCP_relax_feasibility_frob_matrixcomp(
-    U_lower::Array{Float64,2},
-    U_upper::Array{Float64,2},
-)
-    if !(
-        size(U_lower) == size(U_upper)
-    )
-        error("""
-        Dimension mismatch. 
-        Input matrix U_lower must have size (n, k); 
-        Input matrix U_upper must have size (n, k).
-        """)
-    end
-
-    (n, k) = size(U_lower)
-
-    model = Model(Gurobi.Optimizer)
-    set_optimizer_attribute(model, "OutputFlag", 0)
-
-    @variable(model, U[1:n, 1:k])
-    @variable(model, t[1:n, 1:k, 1:k])
-
-    # Lower bounds and upper bounds on U
-    @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
-
-    # McCormick inequalities at U_lower and U_upper here
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≥ (
-            U_lower[i, j2] * U[i, j1] 
-            + U_lower[i, j1] * U[i, j2] 
-            - U_lower[i, j1] * U_lower[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≥ (
-            U_upper[i, j2] * U[i, j1] 
-            + U_upper[i, j1] * U[i, j2] 
-            - U_upper[i, j1] * U_upper[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≤ (
-            U_upper[i, j2] * U[i, j1] 
-            + U_lower[i, j1] * U[i, j2] 
-            - U_lower[i, j1] * U_upper[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≤ (
-            U_lower[i, j2] * U[i, j1] 
-            + U_upper[i, j1] * U[i, j2] 
-            - U_upper[i, j1] * U_lower[i, j2]
-        )
-    )
-
-    # Orthogonality constraints U'U = I using new variables
-    for j1 = 1:k, j2 = j1:k
-        if (j1 == j2)
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + 1e-6
-            )
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - 1e-6
-            )
-        else
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≤   1e-6
-            )
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≥ - 1e-6
-            )
-        end
-    end
-
-    @objective(
-        model,
-        Min,
-        0
-    )
-
-    @suppress optimize!(model)
-
-    return (JuMP.termination_status(model) == MOI.OPTIMAL)
 end
 
 function SOCP_relax_frob_matrixcomp(
@@ -1021,32 +926,6 @@ function objective_function(
         + (1 / (2 * γ)) * sum(X.^2)
         + λ * sum(U.^2)
     )
-end
-
-function feasibility_check_U(U_lower, U_upper)
-    (n, k) = size(U_lower)
-    U_max = max.(abs.(U_lower .- 0), abs.(U_upper .- 0))
-    if !all(
-        sum(U_max[:,i].^2) ≥ 1
-        for i in 1:size(U_max, 2)
-    )
-        return false
-    end
-    U_min = zeros(n, k)
-    for i in 1:n, j in 1:k
-        if U_lower[i,j] ≤ 0 ≤ U_upper[i,j]
-            U_min[i,j] = 0
-        else
-            U_min[i,j] = min(abs(U_lower[i,j] - 0), abs(U_upper[i,j] - 0))
-        end
-    end
-    if !all(
-        sum(U_min[:,i].^2) ≤ 1
-        for i in 1:size(U_min, 2)
-    )
-        return false
-    end
-    return true
 end
 
 function compute_MSE(X, A, indices; kind = "out")
