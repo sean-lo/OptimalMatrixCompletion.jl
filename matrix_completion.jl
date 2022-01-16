@@ -339,7 +339,7 @@ function SDP_relax_feasibility_frob_matrixcomp(
     # McCormick inequalities at U_lower and U_upper here
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≥ (
             U_lower[i, j2] * U[i, j1] 
             + U_lower[i, j1] * U[i, j2] 
@@ -348,7 +348,7 @@ function SDP_relax_feasibility_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≥ (
             U_upper[i, j2] * U[i, j1] 
             + U_upper[i, j1] * U[i, j2] 
@@ -357,7 +357,7 @@ function SDP_relax_feasibility_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≤ (
             U_upper[i, j2] * U[i, j1] 
             + U_lower[i, j1] * U[i, j2] 
@@ -366,7 +366,7 @@ function SDP_relax_feasibility_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≤ (
             U_lower[i, j2] * U[i, j1] 
             + U_upper[i, j1] * U[i, j2] 
@@ -375,7 +375,7 @@ function SDP_relax_feasibility_frob_matrixcomp(
     )
 
     # Orthogonality constraints U'U = I using new variables
-    for j1 = 1:k, j2 = 1:k
+    for j1 = 1:k, j2 = j1:k
         if (j1 == j2)
             @constraint(
                 model,
@@ -458,7 +458,7 @@ function SDP_relax_frob_matrixcomp(
     # McCormick inequalities at U_lower and U_upper here
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≥ (
             U_lower[i, j2] * U[i, j1] 
             + U_lower[i, j1] * U[i, j2] 
@@ -467,7 +467,7 @@ function SDP_relax_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≥ (
             U_upper[i, j2] * U[i, j1] 
             + U_upper[i, j1] * U[i, j2] 
@@ -476,7 +476,7 @@ function SDP_relax_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≤ (
             U_upper[i, j2] * U[i, j1] 
             + U_lower[i, j1] * U[i, j2] 
@@ -485,7 +485,7 @@ function SDP_relax_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≤ (
             U_lower[i, j2] * U[i, j1] 
             + U_upper[i, j1] * U[i, j2] 
@@ -494,7 +494,7 @@ function SDP_relax_frob_matrixcomp(
     )
 
     # Orthogonality constraints U'U = I using new variables
-    for j1 = 1:k, j2 = 1:k
+    for j1 = 1:k, j2 = j1:k
         if (j1 == j2)
             @constraint(
                 model,
@@ -574,7 +574,7 @@ function SOCP_relax_feasibility_frob_matrixcomp(
     # McCormick inequalities at U_lower and U_upper here
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≥ (
             U_lower[i, j2] * U[i, j1] 
             + U_lower[i, j1] * U[i, j2] 
@@ -583,7 +583,7 @@ function SOCP_relax_feasibility_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≥ (
             U_upper[i, j2] * U[i, j1] 
             + U_upper[i, j1] * U[i, j2] 
@@ -592,7 +592,7 @@ function SOCP_relax_feasibility_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≤ (
             U_upper[i, j2] * U[i, j1] 
             + U_lower[i, j1] * U[i, j2] 
@@ -601,7 +601,7 @@ function SOCP_relax_feasibility_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≤ (
             U_lower[i, j2] * U[i, j1] 
             + U_upper[i, j1] * U[i, j2] 
@@ -610,7 +610,7 @@ function SOCP_relax_feasibility_frob_matrixcomp(
     )
 
     # Orthogonality constraints U'U = I using new variables
-    for j1 = 1:k, j2 = 1:k
+    for j1 = 1:k, j2 = j1:k
         if (j1 == j2)
             @constraint(
                 model,
@@ -686,42 +686,122 @@ function SOCP_relax_frob_matrixcomp(
     
     # TODO: see if can improve these by knowledge on bounds on U
 
-    # Y[i,j]^2 <= Y[i,i] * Y[j,j]
-    for i in 1:n, j in 1:n
-        @constraint(model, [Y[i,i]; 0.5 * Y[j,j]; Y[i,j]] in RotatedSecondOrderCone())
-    end
+    # # Y[i,j]^2 <= Y[i,i] * Y[j,j]
+    # @constraint(model, 
+    #     [i in 1:n, j in i:n],
+    #     [
+    #         Y[i,i]; 
+    #         0.5 * Y[j,j]; 
+    #         Y[i,j]
+    #     ] in RotatedSecondOrderCone()
+    # )
+    # || 2 * Y[i,j]; Y[i,i] - Y[j,j] ||₂ ≤ Y[i,i] + Y[j,j]
+    @constraint(model, 
+        [i in 1:n, j in i:n],
+        [
+            Y[i,i] + Y[j,j];
+            Y[i,i] - Y[j,j];
+            2 * Y[i,j]
+        ] in SecondOrderCone()
+    )
     
-    # X[i,j]^2 <= Y[i,i] * Θ[j,j]
-    for i in 1:n, j in 1:m 
-        @constraint(model, [Y[i,i]; 0.5 * Θ[j,j]; X[i,j]] in RotatedSecondOrderCone())
-    end
+    # # X[i,j]^2 <= Y[i,i] * Θ[j,j]
+    # @constraint(model, 
+    #     [i in 1:n, j in 1:m],
+    #     [
+    #         Y[i,i]; 
+    #         0.5 * Θ[j,j]; 
+    #         X[i,j]
+    #     ] in RotatedSecondOrderCone()
+    # )
+    # || 2 * X[i,j]; Y[i,i] - Θ[j,j] ||₂ ≤ Y[i,i] + Θ[j,j]
+    @constraint(model, 
+        [i in 1:n, j in 1:m],
+        [
+            Y[i,i] + Θ[j,j];
+            Y[i,i] - Θ[j,j];
+            2 * X[i,j]
+        ] in SecondOrderCone()
+    )
     
-    # Θ[i,j]^2 <= Θ[i,i] * Θ[j,j]
-    for i in 1:m, j in 1:m 
-        @constraint(model, [Θ[i,i]; 0.5 * Θ[j,j]; Θ[i,j]] in RotatedSecondOrderCone())
-    end
+    # # Θ[i,j]^2 <= Θ[i,i] * Θ[j,j]
+    # @constraint(model, 
+    #     [i in 1:m, j in i:m],
+    #     [
+    #         Θ[i,i]; 
+    #         0.5 * Θ[j,j]; 
+    #         Θ[i,j]
+    #     ] in RotatedSecondOrderCone()
+    # )
+    # || 2 * Θ[i,j]; Θ[i,i] - Θ[j,j] ||₂ ≤ Θ[i,i] + Θ[j,j]
+    @constraint(model,
+        [i in 1:m, j in i:m],
+        [
+            Θ[i,i] + Θ[j,j];
+            Θ[i,i] - Θ[j,j];
+            2 * Θ[i,j]
+        ] in SecondOrderCone() 
+    )
     
-    # Y[i,i] >= sum(U[i,j]^2 for j in 1:k)
-    for i in 1:n
-        @constraint(model, [Y[i,i]; 0.5; U[i,:]] in RotatedSecondOrderCone())
-    end
+    # # Y[i,i] >= sum(U[i,j]^2 for j in 1:k)
+    # @constraint(model, 
+    #     [i in 1:n],
+    #     [
+    #         Y[i,i]; 
+    #         0.5; 
+    #         U[i,:]
+    #     ] in RotatedSecondOrderCone()
+    # )
+    # || 2 * U[i,:]; Y[i,i] - 1 ||₂ ≤ Y[i,i] + 1
+    @constraint(model, 
+        [i in 1:n],
+        [
+            Y[i,i] + 1;
+            Y[i,i] - 1;
+            2 * U[i,:]
+        ] in SecondOrderCone()
+    )
 
     # TODO: see if can improve these (McCormick-like) by knowledge on bounds on U
+    # (\alpha = +-1 currently but at other nodes? what is the current centerpoint of my box? if i linearize there do i get a better approx?)
 
     # Adamturk and Gomez:
-    for i in 1:n, j in 1:n
-        @constraint(model, [
-            Y[i,i] + Y[j,j] + 2 * Y[i,j];
-            0.5;
-            U[i,:] + U[j,:]
-        ] in RotatedSecondOrderCone())
-        @constraint(model, [
-            Y[i,i] + Y[j,j] - 2 * Y[i,j];
-            0.5;
-            U[i,:] - U[j,:]
-        ] in RotatedSecondOrderCone())
-    end
-
+    # # || U[i,:] + U[j,:] ||²₂ ≤ Y[i,i] + Y[j,j] + 2 * Y[i,j]
+    # @constraint(model, 
+    #     [i in 1:n, j in i:n],
+    #     [
+    #         Y[i,i] + Y[j,j] + 2 * Y[i,j];
+    #         0.5;
+    #         U[i,:] + U[j,:]
+    #     ] in RotatedSecondOrderCone()
+    # )
+    # # || U[i,:] - U[j,:] ||²₂ ≤ Y[i,i] + Y[j,j] - 2 * Y[i,j]
+    # @constraint(model, 
+    #     [i in 1:n, j in i:n],
+    #     [
+    #         Y[i,i] + Y[j,j] -+ 2 * Y[i,j];
+    #         0.5;
+    #         U[i,:] - U[j,:]
+    #     ] in RotatedSecondOrderCone()
+    # )
+    # || 2 * (U[i,:] + U[j,:]); Y[i,i] + Y[j,j] + 2 * Y[i,j] - 1 ||₂ ≤ Y[i,i] + Y[j,j] + 2 * Y[i,j] + 1
+    @constraint(model, 
+        [i in 1:n, j in i:n],
+        [
+            Y[i,i] + Y[j,j] + 2 * Y[i,j] + 1;
+            Y[i,i] + Y[j,j] + 2 * Y[i,j] - 1;
+            2 * (U[i,:] + U[j,:])
+        ] in SecondOrderCone()
+    )
+    # || 2 * (U[i,:] + U[j,:]); Y[i,i] + Y[j,j] - 2 * Y[i,j] - 1 ||₂ ≤ Y[i,i] + Y[j,j] - 2 * Y[i,j] + 1
+    @constraint(model, 
+        [i in 1:n, j in i:n],
+        [
+            Y[i,i] + Y[j,j] - 2 * Y[i,j] + 1;
+            Y[i,i] + Y[j,j] - 2 * Y[i,j] - 1;
+            2 * (U[i,:] - U[j,:])
+        ] in SecondOrderCone()
+    )
     
     # Trace constraint on Y
     @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
@@ -732,7 +812,7 @@ function SOCP_relax_frob_matrixcomp(
     # McCormick inequalities at U_lower and U_upper here
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≥ (
             U_lower[i, j2] * U[i, j1] 
             + U_lower[i, j1] * U[i, j2] 
@@ -741,7 +821,7 @@ function SOCP_relax_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≥ (
             U_upper[i, j2] * U[i, j1] 
             + U_upper[i, j1] * U[i, j2] 
@@ -750,7 +830,7 @@ function SOCP_relax_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≤ (
             U_upper[i, j2] * U[i, j1] 
             + U_lower[i, j1] * U[i, j2] 
@@ -759,7 +839,7 @@ function SOCP_relax_frob_matrixcomp(
     )
     @constraint(
         model,
-        [i = 1:n, j1 = 1:k, j2 = 1:k],
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
         t[i, j1, j2] ≤ (
             U_lower[i, j2] * U[i, j1] 
             + U_upper[i, j1] * U[i, j2] 
@@ -768,7 +848,7 @@ function SOCP_relax_frob_matrixcomp(
     )
 
     # Orthogonality constraints U'U = I using new variables
-    for j1 = 1:k, j2 = 1:k
+    for j1 = 1:k, j2 = j1:k
         if (j1 == j2)
             @constraint(
                 model,
