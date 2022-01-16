@@ -21,6 +21,7 @@ function branchandbound_frob_matrixcomp(
     ;
     relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
+    root_only::Bool = false, # if true, only solves relaxation at root node
     max_steps::Int = 1000000,
     time_limit::Int = 3600, # time limit in seconds
     with_log::Bool = true,
@@ -129,15 +130,15 @@ function branchandbound_frob_matrixcomp(
 
     U_lower_initial = -ones(n, k)
     U_upper_initial = ones(n, k)
-    nodes = [(U_lower_initial, U_upper_initial, 1)]
+    node_id = 1
+    nodes = [(U_lower_initial, U_upper_initial, node_id)]
 
     upper = objective_initial
-    lower = -1e10
+    lower = -Inf
 
-    lower_bounds = Dict()
+    lower_bounds = Dict{Integer, Float64}()
     ancestry = []
 
-    node_id = 1
     counter = 1
     last_updated_counter = 1    
     now_gap = 1e5
@@ -191,6 +192,9 @@ function branchandbound_frob_matrixcomp(
             t_relax = relax_result["t"]
             X_relax = relax_result["X"]
             Θ_relax = relax_result["Θ"]
+            if node_id == 1
+                lower = objective_relax
+            end
         end
 
         # if solution for relax_result has higher objective than best found so far: prune the node
@@ -233,6 +237,7 @@ function branchandbound_frob_matrixcomp(
         push!(nodes, (U_lower, U_upper_new, counter + 1))
         push!(nodes, (U_lower_new, U_upper, counter + 2))
         push!(ancestry, (node_id, [counter + 1, counter + 2]))
+        counter += 2
 
         (anc_node_id, anc_children_node_ids) = ancestry[1]
         if all(haskey(lower_bounds, id) for id in anc_children_node_ids)
@@ -245,7 +250,14 @@ function branchandbound_frob_matrixcomp(
             end
         end
 
-        counter += 2
+        if node_id == 1
+            add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+            last_updated_counter = counter
+            if root_only
+                break
+            end
+        end
+
         if ((counter ÷ update_step) > (last_updated_counter ÷ update_step))
             add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
             last_updated_counter = counter
