@@ -266,6 +266,8 @@ function branchandbound_frob_matrixcomp(
 
     if with_log
         open(outfile, "a+") do f
+            print(f, "\n\nInitial solution (warm start):\n")
+            show(f, "text/plain", objective_initial)
             print(f, "\n\nMSE of sampled entries (warm start):\n")
             show(f, "text/plain", MSE_in_initial)
             print(f, "\n\nMSE of unsampled entries (warm start):\n")
