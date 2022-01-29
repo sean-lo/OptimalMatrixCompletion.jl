@@ -24,41 +24,25 @@ function branchandbound_frob_matrixcomp(
     root_only::Bool = false, # if true, only solves relaxation at root node
     max_steps::Int = 1000000,
     time_limit::Int = 3600, # time limit in seconds
-    with_log::Bool = true,
     update_step::Int = 1000,
 )
 
-    function print_output(outfile::String, printlist, with_log::Bool)
-        if with_log
-            open(outfile, "a+") do f
-                for note in printlist
-                    print(f, note)
-                    print(note)
-                end
-            end
-        else
-            for note in printlist
-                print(note)
-            end
-        end
-    end
 
-    function add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+    function add_update(printlist, node_id, counter, lower, upper, start_time)
         if (lower == -1e10 || upper == 1e10)
             return
         end
-        printlist = [
-            Printf.@sprintf(
-                "| %10d | %10d | %10f | %10f | %10f | %10.3f  s  |\n",
-                node_id,
-                counter,
-                lower,
-                upper,
-                abs((upper - lower) / (lower + 1e-10)),
-                time() - start_time,
-            ),
-        ]
-        print_output(outfile, printlist, with_log)
+        message = Printf.@sprintf(
+            "| %10d | %10d | %10f | %10f | %10f | %10.3f  s  |\n",
+            node_id,
+            counter,
+            lower,
+            upper,
+            abs((upper - lower) / (lower + 1e-10)),
+            time() - start_time,
+        )
+        print(stdout, message)
+        push!(printlist, message)
     end
 
     if !(relaxation in ["SDP", "SOCP"])
@@ -76,11 +60,7 @@ function branchandbound_frob_matrixcomp(
         """)
     end
 
-    if with_log
-        log_time = Dates.now()
-        time_string = Dates.format(log_time, "yyyymmdd_HHMMSS")
-        outfile = "logs/" * time_string * ".txt"
-    end
+    log_time = Dates.now()
 
     (n, m) = size(A)
     printlist = [
@@ -100,7 +80,9 @@ function branchandbound_frob_matrixcomp(
         "|   Explored |      Total |  Objective |  Incumbent |        Gap |    Runtime (s) |\n",
         "-----------------------------------------------------------------------------------\n",
     ]
-    print_output(outfile, printlist, with_log)
+    for message in printlist
+        print(stdout, message)
+    end
 
     start_time = time()
 
@@ -119,13 +101,19 @@ function branchandbound_frob_matrixcomp(
     MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
     MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
     
-    best_solution = Dict(
-        "objective" => objective_initial, 
+    solution = Dict(
+        "objective_initial" => objective_initial,
+        "MSE_in_initial" => MSE_in_initial,
+        "MSE_out_initial" => MSE_out_initial,
+        "Y_initial" => Y_initial,
+        "U_initial" => U_initial,
+        "X_initial" => X_initial,
+        "objective" => objective_initial,
+        "MSE_in" => MSE_in_initial,
+        "MSE_out" => MSE_out_initial,
         "Y" => Y_initial,
         "U" => U_initial,
         "X" => X_initial,
-        "MSE_in" => MSE_in_initial,
-        "MSE_out" => MSE_out_initial,
     )
 
     U_lower_initial = -ones(n, k)
@@ -151,7 +139,7 @@ function branchandbound_frob_matrixcomp(
         if length(nodes) != 0
             (U_lower, U_upper, node_id) = popfirst!(nodes)
         else
-            add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+            add_update(printlist, node_id, counter, lower, upper, start_time)
             break
         end
 
@@ -190,25 +178,24 @@ function branchandbound_frob_matrixcomp(
         end
 
         # if solution for relax_result has higher objective than best found so far: prune the node
-        if objective_relax ≥ best_solution["objective"]
+        if objective_relax ≥ solution["objective"]
             prune_flag = true
         end
 
         # if solution for relax_result is feasible for original problem:
         # prune this node;
-        # if it is the best found so far, update best_solution
+        # if it is the best found so far, update solution
         if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, t_relax, X_relax, Θ_relax)
-            # if best found so far, update best_solution
-            if objective_relax < best_solution["objective"]
-                best_solution["objective"] = objective_relax
+            # if best found so far, update solution
+            if objective_relax < solution["objective"]
+                solution["objective"] = objective_relax
                 upper = objective_relax
-                best_solution["Y"] = copy(Y_relax)
-                best_solution["U"] = copy(U_relax)
-                best_solution["X"] = copy(X_relax)
-                best_solution["MSE_in"] = compute_MSE(X_relax, A, indices, kind = "in")
-                best_solution["MSE_out"] = compute_MSE(X_relax, A, indices, kind = "out")
-                println("better solution found!")
-                add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+                solution["Y"] = copy(Y_relax)
+                solution["U"] = copy(U_relax)
+                solution["X"] = copy(X_relax)
+                solution["MSE_in"] = compute_MSE(X_relax, A, indices, kind = "in")
+                solution["MSE_out"] = compute_MSE(X_relax, A, indices, kind = "out")
+                add_update(printlist, node_id, counter, lower, upper, start_time)
                 last_updated_counter = counter
             end
             prune_flag = true
@@ -237,13 +224,13 @@ function branchandbound_frob_matrixcomp(
             pop!(lower_bounds, anc_node_id)
             if minimum(values(lower_bounds)) > lower
                 lower = minimum(values(lower_bounds))
-                add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+                add_update(printlist, node_id, counter, lower, upper, start_time)
                 last_updated_counter = counter
             end
         end
 
         if node_id == 1
-            add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+            add_update(printlist, node_id, counter, lower, upper, start_time)
             last_updated_counter = counter
             if root_only
                 break
@@ -251,39 +238,38 @@ function branchandbound_frob_matrixcomp(
         end
 
         if ((counter ÷ update_step) > (last_updated_counter ÷ update_step))
-            add_update(node_id, counter, lower, upper, start_time, outfile, with_log)
+            add_update(printlist, node_id, counter, lower, upper, start_time)
             last_updated_counter = counter
         end
     end
 
-    if with_log
-        open(outfile, "a+") do f
-            print(f, "\n\nInitial solution (warm start):\n")
-            show(f, "text/plain", objective_initial)
-            print(f, "\n\nMSE of sampled entries (warm start):\n")
-            show(f, "text/plain", MSE_in_initial)
-            print(f, "\n\nMSE of unsampled entries (warm start):\n")
-            show(f, "text/plain", MSE_out_initial)
-            print(f, "\n\nU:\n")
-            show(f, "text/plain", best_solution["U"])
-            print(f, "\n\nY:\n")
-            show(f, "text/plain", best_solution["Y"])
-            print(f, "\n\nX:\n")
-            show(f, "text/plain", best_solution["X"])
-            print(f, "\n\nA:\n")
-            show(f, "text/plain", A)
-            print(f, "\n\nindices:\n")
-            show(f, "text/plain", indices)
-            print(f, "\n\nBest incumbent solution:\n")
-            show(f, "text/plain", best_solution["objective"])
-            print(f, "\n\nMSE of sampled entries:\n")
-            show(f, "text/plain", best_solution["MSE_in"])
-            print(f, "\n\nMSE of unsampled entries:\n")
-            show(f, "text/plain", best_solution["MSE_out"])
-        end
-    end
+    push!(
+        printlist,
+        "\n\nInitial solution (warm start):\n",
+        sprint(show, "text/plain", objective_initial),
+        "\n\nMSE of sampled entries (warm start):\n",
+        sprint(show, "text/plain", MSE_in_initial),
+        "\n\nMSE of unsampled entries (warm start):\n",
+        sprint(show, "text/plain", MSE_out_initial),
+        "\n\nU:\n",
+        sprint(show, "text/plain", solution["U"]),
+        "\n\nY:\n",
+        sprint(show, "text/plain", solution["Y"]),
+        "\n\nX:\n",
+        sprint(show, "text/plain", solution["X"]),
+        "\n\nA:\n",
+        sprint(show, "text/plain", A),
+        "\n\nindices:\n",
+        sprint(show, "text/plain", indices),
+        "\n\nBest incumbent solution:\n",
+        sprint(show, "text/plain", solution["objective"]),
+        "\n\nMSE of sampled entries:\n",
+        sprint(show, "text/plain", solution["MSE_in"]),
+        "\n\nMSE of unsampled entries:\n",
+        sprint(show, "text/plain", solution["MSE_out"]),
+    )
 
-    return best_solution
+    return solution, printlist
 
 end
 

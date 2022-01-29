@@ -246,6 +246,7 @@ function test_branchandbound_frob_matrixcomp(
     root_only::Bool = false,
     max_steps::Int = 10000,
     time_limit::Int = 3600,
+    with_log::Bool = true,
 )
     if n_indices < (n + m) * k
         error("""
@@ -262,7 +263,8 @@ function test_branchandbound_frob_matrixcomp(
     A = randn(Float64, (n, m))
     indices = generate_masked_bitmatrix(n, m, n_indices)
 
-    return branchandbound_frob_matrixcomp(
+    log_time = Dates.now()
+    solution, printlist = branchandbound_frob_matrixcomp(
         k,
         A,
         indices,
@@ -274,6 +276,18 @@ function test_branchandbound_frob_matrixcomp(
         max_steps = max_steps,
         time_limit = time_limit,
     )
+
+    if with_log
+        time_string = Dates.format(log_time, "yyyymmdd_HHMMSS")
+        outfile = "logs/" * time_string * ".txt"
+        open(outfile, "a+") do f
+            for note in printlist
+                print(f, note)
+            end
+        end
+    end
+
+    return solution
 end
 
 include("matrix_completion.jl")
