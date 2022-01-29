@@ -454,6 +454,9 @@ function SDP_relax_frob_matrixcomp(
 
     @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
 
+    # Trace constraint on Y
+    @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
+
     # Lower bounds and upper bounds on U
     @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
 
