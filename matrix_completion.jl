@@ -534,7 +534,10 @@ function SDP_relax_frob_matrixcomp(
 
     @suppress optimize!(model)
 
-    if JuMP.termination_status(model) == MOI.OPTIMAL
+    if JuMP.termination_status(model) in [
+        MOI.OPTIMAL,
+        MOI.LOCALLY_SOLVED, # TODO: verify if locally solved is okay
+    ]
         return Dict(
             "feasible" => true,
             "objective" => objective_value(model),
@@ -544,10 +547,19 @@ function SDP_relax_frob_matrixcomp(
             "X" => value.(X),
             "Θ" => value.(Θ),
         )
-    else
+    elseif JuMP.termination_status(model) in [
+        MOI.INFEASIBLE,
+        MOI.DUAL_INFEASIBLE,
+        MOI.LOCALLY_INFEASIBLE,
+        MOI.INFEASIBLE_OR_UNBOUNDED,
+    ]
         return Dict(
             "feasible" => false,
         )
+    else
+        error("""
+        unexpected termination status: $(JuMP.termination_status(model))
+        """)
     end
 end
 
@@ -791,7 +803,10 @@ function SOCP_relax_frob_matrixcomp(
 
     @suppress optimize!(model)
 
-    if JuMP.termination_status(model) == MOI.OPTIMAL
+    if JuMP.termination_status(model) in [
+        MOI.OPTIMAL,
+        MOI.LOCALLY_SOLVED, # TODO: verify if locally solved is okay
+    ]
         return Dict(
             "feasible" => true,
             "objective" => objective_value(model),
@@ -801,10 +816,19 @@ function SOCP_relax_frob_matrixcomp(
             "X" => value.(X),
             "Θ" => value.(Θ),
         )
-    else
+    elseif JuMP.termination_status(model) in [
+        MOI.INFEASIBLE,
+        MOI.DUAL_INFEASIBLE,
+        MOI.LOCALLY_INFEASIBLE,
+        MOI.INFEASIBLE_OR_UNBOUNDED,
+    ]
         return Dict(
             "feasible" => false,
         )
+    else
+        error("""
+        unexpected termination status: $(JuMP.termination_status(model))
+        """)
     end
 end
 
