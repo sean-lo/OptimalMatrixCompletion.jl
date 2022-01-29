@@ -184,6 +184,7 @@ function test_branchandbound_frob_matrixcomp(
     γ::Float64 = 1.0,
     λ::Float64 = 1.0,
     relaxation::String = "SDP",
+    root_only::Bool = false,
     max_steps::Int = 10000,
     time_limit::Int = 3600,
 )
@@ -210,6 +211,7 @@ function test_branchandbound_frob_matrixcomp(
         λ,
         ;
         relaxation = relaxation,
+        root_only = root_only,
         max_steps = max_steps,
         time_limit = time_limit,
     )
