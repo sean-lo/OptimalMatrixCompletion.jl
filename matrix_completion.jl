@@ -173,14 +173,14 @@ function branchandbound_frob_matrixcomp(
             break
         end
 
-        prune_flag = false
+        split_flag = true
 
         if !(
             @suppress relax_feasibility_frob_matrixcomp(
                 U_lower, U_upper, relaxation
             )
         )
-            prune_flag = true
+            split_flag = false
             continue
         end
 
@@ -192,7 +192,7 @@ function branchandbound_frob_matrixcomp(
         end
         
         if relax_result["feasible"] == false
-            prune_flag = true
+            split_flag = false
             continue
         else
             objective_relax = relax_result["objective"]
@@ -209,7 +209,7 @@ function branchandbound_frob_matrixcomp(
 
         # if solution for relax_result has higher objective than best found so far: prune the node
         if objective_relax ≥ solution["objective"]
-            prune_flag = true
+            split_flag = false
         end
 
         # if solution for relax_result is feasible for original problem:
@@ -226,10 +226,10 @@ function branchandbound_frob_matrixcomp(
                 now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
                 last_updated_counter = counter
             end
-            prune_flag = true
+            split_flag = false
         end
 
-        if prune_flag
+        if split_flag == false
             continue
         end
 
@@ -1166,7 +1166,7 @@ function angular_branchandbound_frob_matrixcomp(
             break
         end
 
-        prune_flag = false
+        split_flag = true
 
         (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
 
@@ -1176,7 +1176,7 @@ function angular_branchandbound_frob_matrixcomp(
                 U_lower, U_upper, relaxation
             )
         )
-            prune_flag = true
+            split_flag = false
             continue
         end
 
@@ -1188,7 +1188,7 @@ function angular_branchandbound_frob_matrixcomp(
         end
         
         if relax_result["feasible"] == false
-            prune_flag = true
+            split_flag = false
             continue
         else
             objective_relax = relax_result["objective"]
@@ -1205,7 +1205,7 @@ function angular_branchandbound_frob_matrixcomp(
 
         # if solution for relax_result has higher objective than best found so far: prune the node
         if objective_relax ≥ solution["objective"]
-            prune_flag = true
+            split_flag = false
         end
 
         # if solution for relax_result is feasible for original problem:
@@ -1222,10 +1222,10 @@ function angular_branchandbound_frob_matrixcomp(
                 now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
                 last_updated_counter = counter
             end
-            prune_flag = true
+            split_flag = false
         end
 
-        if prune_flag
+        if split_flag == false
             continue
         end
 
