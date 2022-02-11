@@ -291,11 +291,22 @@ function test_branchandbound_frob_matrixcomp(
     γ::Float64 = 1.0,
     λ::Float64 = 1.0,
     relaxation::String = "SDP",
+    branching_type::String = "box",
     root_only::Bool = false,
     max_steps::Int = 10000,
     time_limit::Int = 3600,
     with_log::Bool = true,
 )
+    if !(
+        relaxation in ["SDP", "SOCP"]
+        && branching_type in ["box", "angular"]
+    )
+        error("""
+        Invalid argument.
+        Input argument relaxation must be one of "SDP", "SOCP".
+        Input argument branching_type must be one of "box", "angular".        
+        """)
+    end
     if n_indices < (n + m) * k
         error("""
         System is under-determined. 
@@ -312,18 +323,33 @@ function test_branchandbound_frob_matrixcomp(
     indices = generate_masked_bitmatrix(n, m, n_indices)
 
     log_time = Dates.now()
-    solution, printlist = branchandbound_frob_matrixcomp(
-        k,
-        A,
-        indices,
-        γ,
-        λ,
-        ;
-        relaxation = relaxation,
-        root_only = root_only,
-        max_steps = max_steps,
-        time_limit = time_limit,
-    )
+    if branching_type == "box"
+        solution, printlist, instance = branchandbound_frob_matrixcomp(
+            k,
+            A,
+            indices,
+            γ,
+            λ,
+            ;
+            relaxation = relaxation,
+            root_only = root_only,
+            max_steps = max_steps,
+            time_limit = time_limit,
+        )
+    elseif branching_type == "angular"
+        solution, printlist, instance = angular_branchandbound_frob_matrixcomp(
+            k,
+            A,
+            indices,
+            γ,
+            λ,
+            ;
+            relaxation = relaxation,
+            root_only = root_only,
+            max_steps = max_steps,
+            time_limit = time_limit,
+        )
+    end
 
     if with_log
         time_string = Dates.format(log_time, "yyyymmdd_HHMMSS")
@@ -335,7 +361,7 @@ function test_branchandbound_frob_matrixcomp(
         end
     end
 
-    return solution
+    return solution, printlist, instance
 end
 
 include("matrix_completion.jl")
