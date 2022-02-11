@@ -146,6 +146,7 @@ function branchandbound_frob_matrixcomp(
     )
 
     U_lower_initial = -ones(n, k)
+    U_lower_initial[n,:] .= 0.0
     U_upper_initial = ones(n, k)
     node_id = 1
     nodes = [(U_lower_initial, U_upper_initial, node_id)]
