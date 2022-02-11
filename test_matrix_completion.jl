@@ -1,5 +1,8 @@
 using Test
 using Random
+using Plots
+using CSV
+using DataFrames
 
 include("matrix_completion.jl")
 include("utils.jl")
