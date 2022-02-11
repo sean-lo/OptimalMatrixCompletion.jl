@@ -366,6 +366,70 @@ end
 
 include("matrix_completion.jl")
 
+function run_experiments(
+    k, m, n, n_indices, seeds,
+    ;
+    γ_ranges = [1.0],
+    λ_ranges = [1.0],
+    relaxation_ranges = ["SDP", "SOCP"],
+    branching_type_ranges = ["angular", "box"],
+    max_steps = 10000,
+    time_limit = 3600,
+)
+    for (seed, λ, relaxation, branching_type, γ) in Iterators.product(
+        seeds,
+        λ_ranges,
+        relaxation_ranges,
+        branching_type_ranges,
+        γ_ranges, 
+    )
+        try
+            solution, printlist, instance =     test_branchandbound_frob_matrixcomp(
+                k, m, n, n_indices, seed,
+                γ = γ, λ = λ, 
+                relaxation = relaxation, 
+                branching_type = branching_type,
+                max_steps = max_steps, 
+                time_limit = time_limit,
+            )
+            filename = "$(branching_type)_$(relaxation)_$(k)_$(m)_$(n)_$(n_indices)_$(seed)_$(γ)_$(λ).csv"
+            run_log_filepath = "logs/run_logs/" * filename
+            CSV.write(run_log_filepath, instance["run_log"])
+        catch e
+            continue
+        end
+    end
+end
+
+run_experiments(
+    1, 4, 5, 10, [1];
+    γ_ranges = [1.0],
+    λ_ranges = [1.0],
+    relaxation_ranges = ["SDP"],
+    branching_type_ranges = ["angular"],
+    max_steps = 100000,
+    time_limit = 240,
+)
+
+run_experiments(
+    1, 4, 5, 10, 0:4;
+    γ_ranges = [1.0, 2.0, 0.5, 5.0, 0.2],
+    λ_ranges = [1.0],
+    relaxation_ranges = ["SDP"],
+    branching_type_ranges = ["angular", "box"],
+    max_steps = 100000,
+    time_limit = 240,
+)
+
+run_experiments(
+    1, 5, 6, 15, 0:4;
+    γ_ranges = [1.0, 2.0, 0.5, 5.0, 0.2],
+    λ_ranges = [1.0],
+    relaxation_ranges = ["SDP"],
+    branching_type_ranges = ["angular", "box"],
+    max_steps = 100000,
+    time_limit = 600,
+)
 
 result = test_branchandbound_frob_matrixcomp(1,3,4,8,1, time_limit = 120, max_steps = 10000, root_only = true)
 
