@@ -233,6 +233,54 @@ end
 U, V = test_alternating_minimization(1,3,4,8,1)
 @test(rank(U * V) == 1)
 
+include("matrix_completion.jl")
+
+n = 2
+k = 1
+
+φ_lower = zeros(n-1,k)
+φ_upper = fill(convert(Float64, pi), (n-1,k))
+result = φ_ranges_to_U_ranges(φ_lower, φ_upper) 
+@test(result[1] ≈ reshape([-1.0, 0.0], (n,k)))
+@test(result[2] ≈ reshape([ 1.0, 1.0], (n,k)))
+
+n = 2
+k = 1
+
+φ_lower = fill(convert(Float64, pi) / 2, (n-1,k))
+φ_upper = fill(convert(Float64, pi), (n-1,k))
+result = φ_ranges_to_U_ranges(φ_lower, φ_upper) 
+@test(result[1] ≈ reshape([-1.0, 0.0], (n,k)))
+@test(result[2] ≈ reshape([ 0.0, 1.0], (n,k)))
+
+n = 2
+k = 1
+
+φ_lower = fill(convert(Float64, pi) / 4, (n-1,k))
+φ_upper = fill(convert(Float64, pi) / 2, (n-1,k))
+result = φ_ranges_to_U_ranges(φ_lower, φ_upper) 
+@test(result[1] ≈ reshape([0.0, sqrt(2)/2], (n,k)))
+@test(result[2] ≈ reshape([sqrt(2)/2, 1.0], (n,k)))
+
+n = 3
+k = 1
+
+φ_lower = zeros(n-1,k)
+φ_upper = fill(convert(Float64, pi), (n-1,k))
+result = φ_ranges_to_U_ranges(φ_lower, φ_upper)
+@test(result[1] ≈ reshape([-1.0, -1.0, 0.0], (n,k)))
+@test(result[2] ≈ reshape([ 1.0,  1.0, 1.0], (n,k)))
+
+n = 3
+k = 1
+
+φ_lower = fill(convert(Float64, pi) / 4, (n-1,k))
+φ_upper = fill(convert(Float64, pi) / 2, (n-1,k))
+result = φ_ranges_to_U_ranges(φ_lower, φ_upper)
+@test(result[1] ≈ reshape([0.0, 0.0, 0.5], (n,k)))
+@test(result[2] ≈ reshape([sqrt(2)/2, sqrt(2)/2, 1.0], (n,k)))
+
+
 function test_branchandbound_frob_matrixcomp(
     k::Int,
     m::Int,
