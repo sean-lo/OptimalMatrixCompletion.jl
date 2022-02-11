@@ -18,7 +18,7 @@ function generate_masked_bitmatrix(
     return reshape(index_vec, (dim1, dim2))
 end
 
-function test_SDP_relax_frob_matrixcomp(
+function test_relax_frob_matrixcomp(
     k::Int,
     m::Int,
     n::Int,
@@ -29,8 +29,15 @@ function test_SDP_relax_frob_matrixcomp(
     ;
     γ::Float64 = 1.0,
     λ::Float64 = 1.0,
+    relaxation::String = "SDP",
     solver_output::Int = 1,
 )
+    if !(relaxation in ["SDP", "SOCP"])
+        error("""
+        Invalid input for relaxation method.
+        Relaxation must be either "SDP" or "SOCP".
+        """)
+    end
     if n_indices < (n + m) * k
         error("""
         System is under-determined. 
@@ -46,7 +53,8 @@ function test_SDP_relax_frob_matrixcomp(
     A = randn(Float64, (n, m))
     indices = generate_masked_bitmatrix(n, m, n_indices)
 
-    return SDP_relax_frob_matrixcomp(
+    return relax_frob_matrixcomp(
+        relaxation,
         U_lower,
         U_upper,
         A,
@@ -61,10 +69,11 @@ end
 include("matrix_completion.jl");
 
 # example with solution infeasible for original
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,3,4,8,0,
     -ones(4,1), ones(4,1),
-    ; 
+    ;
+    relaxation = "SDP",
     solver_output=0,
 );
 @test(!master_problem_frob_matrixcomp_feasible(
@@ -76,12 +85,13 @@ result = test_SDP_relax_frob_matrixcomp(
 ))
 
 # example with solution feasible for original
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,3,4,8,0,
     fill(0.5,(4,1)), ones(4,1),
-    ; 
+    ;
+    relaxation = "SDP",
     solver_output=0,
-)
+);
 @test(master_problem_frob_matrixcomp_feasible(
     result["Y"],
     result["U"],
@@ -90,10 +100,11 @@ result = test_SDP_relax_frob_matrixcomp(
     result["Θ"],
 ))
 
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     2,5,7,25,0,
     -ones(7,2), ones(7,2),
     ; 
+    relaxation = "SDP",
     solver_output=0,
 )
 @test(!master_problem_frob_matrixcomp_feasible(
@@ -104,99 +115,73 @@ result = test_SDP_relax_frob_matrixcomp(
     result["Θ"],
 ))
 
-function test_SOCP_relax_frob_matrixcomp(
-    k::Int,
-    m::Int,
-    n::Int,
-    n_indices::Int,
-    seed::Int,
-    U_lower::Array{Float64,2},
-    U_upper::Array{Float64,2},
-    ;
-    γ::Float64 = 10.0,
-    λ::Float64 = 1.0,
-    solver_output::Int = 1,
-)
-    if n_indices < (n + m) * k
-        error("""
-        System is under-determined. 
-        n_indices must be at least (n + m) * k.
-        """)
-    end
-    if n_indices > n * m
-        error("""
-        Cannot generate random indices of length more than the size of matrix A.
-        """)
-    end
-    Random.seed!(seed)
-    A = randn(Float64, (n, m))
-    indices = generate_masked_bitmatrix(n, m, n_indices)
-
-    return SOCP_relax_frob_matrixcomp(
-        U_lower,
-        U_upper,
-        A,
-        indices,
-        γ,
-        λ,
-        ;
-        solver_output = solver_output,
-    )
-end
-
 include("matrix_completion.jl")
 
-result = test_SOCP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,3,4,8,1,-ones(4,1), ones(4,1); γ = 10.0,
+    relaxation = "SOCP",
 )
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,3,4,8,1,-ones(4,1), ones(4,1); γ = 10.0,
+    relaxation = "SDP",
 )
 
 tr(result["Y"])
 
-result = test_SOCP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,5,6,15,5,-ones(6,1), ones(6,1); γ = 10.0,
+    relaxation = "SOCP",
 )
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,5,6,15,5,-ones(6,1), ones(6,1); γ = 10.0,
+    relaxation = "SDP",
 )
 
 tr(result["Y"])
 
-result = test_SOCP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,6,7,21,5,-ones(7,1), ones(7,1); γ = 10.0,
+    relaxation = "SOCP",
 )
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,6,7,21,5,-ones(7,1), ones(7,1); γ = 10.0,
+    relaxation = "SDP",
 )
 
-result = test_SOCP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,10,15,75,1,-ones(15,1), ones(15,1); γ = 10.0,
+    relaxation = "SOCP",
 )
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,10,15,75,1,-ones(15,1), ones(15,1); γ = 10.0,
+    relaxation = "SDP",
 )
 
-result = test_SOCP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,20,25,250,1,-ones(25,1), ones(25,1); γ = 10.0,
+    relaxation = "SOCP",
 )
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,20,25,250,1,-ones(25,1), ones(25,1); γ = 10.0,
+    relaxation = "SDP",
 )
 
-result = test_SOCP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,30,40,600,1,-ones(40,1), ones(40,1); γ = 10.0,
+    relaxation = "SOCP",
 )
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,30,40,600,1,-ones(40,1), ones(40,1); γ = 10.0,
+    relaxation = "SDP",
 )
 
-result = test_SOCP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,40,50,1000,1,-ones(50,1), ones(50,1); γ = 10.0,
+    relaxation = "SOCP",
 )
-result = test_SDP_relax_frob_matrixcomp(
+result = test_relax_frob_matrixcomp(
     1,40,50,1000,1,-ones(50,1), ones(50,1); γ = 10.0,
+    relaxation = "SDP",
 )
 
 tr(result["Y"])

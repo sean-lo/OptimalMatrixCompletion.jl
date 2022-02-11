@@ -206,12 +206,8 @@ function branchandbound_frob_matrixcomp(
             continue
         end
 
-        # solve SDP relaxation of master problem
-        if relaxation == "SDP"
-            relax_result = @suppress SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
-        elseif relaxation == "SOCP"
-            relax_result = @suppress SOCP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
-        end
+        # solve SDP / SOCP relaxation of master problem
+        relax_result = @suppress relax_frob_matrixcomp(relaxation, U_lower, U_upper, A, indices, γ, λ)
         
         if relax_result["feasible"] == false
             split_flag = false
@@ -472,7 +468,8 @@ function relax_feasibility_frob_matrixcomp(
     return (JuMP.termination_status(model) == MOI.OPTIMAL)
 end
 
-function SDP_relax_frob_matrixcomp(
+function relax_frob_matrixcomp(
+    relaxation::String,
     U_lower::Array{Float64,2},
     U_upper::Array{Float64,2},
     A::Array{Float64,2},
@@ -483,6 +480,12 @@ function SDP_relax_frob_matrixcomp(
     orthogonality_tolerance::Float64 = 0.0,
     solver_output::Int = 0,
 )
+    if !(relaxation in ["SDP", "SOCP"])
+        error("""
+        Invalid input for relaxation method.
+        Relaxation must be either "SDP" or "SOCP".
+        """)
+    end
     if !(
         size(U_lower) == size(U_upper) 
         && size(U_lower, 1) == size(U_upper, 1) == size(A, 1) == size(indices, 1) 
@@ -500,165 +503,15 @@ function SDP_relax_frob_matrixcomp(
     (n, k) = size(U_lower)
     (n, m) = size(A)
 
-    model = Model(Mosek.Optimizer)
-    if solver_output == 0
-        set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
-    end
-    # set_optimizer_attribute(model, "OutputFlag", solver_output)
-
-    @variable(model, X[1:n, 1:m])
-    @variable(model, Y[1:n, 1:n], Symmetric)
-    @variable(model, Θ[1:m, 1:m], Symmetric)
-    @variable(model, U[1:n, 1:k])
-    @variable(model, t[1:n, 1:k, 1:k])
-
-    @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
-    @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
-
-    @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
-
-    # Trace constraint on Y
-    @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
-
-    # Lower bounds and upper bounds on U
-    @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
-
-    # McCormick inequalities at U_lower and U_upper here
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≥ (
-            U_lower[i, j2] * U[i, j1] 
-            + U_lower[i, j1] * U[i, j2] 
-            - U_lower[i, j1] * U_lower[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≥ (
-            U_upper[i, j2] * U[i, j1] 
-            + U_upper[i, j1] * U[i, j2] 
-            - U_upper[i, j1] * U_upper[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≤ (
-            U_upper[i, j2] * U[i, j1] 
-            + U_lower[i, j1] * U[i, j2] 
-            - U_lower[i, j1] * U_upper[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≤ (
-            U_lower[i, j2] * U[i, j1] 
-            + U_upper[i, j1] * U[i, j2] 
-            - U_upper[i, j1] * U_lower[i, j2]
-        )
-    )
-
-    # Orthogonality constraints U'U = I using new variables
-    for j1 = 1:k, j2 = j1:k
-        if (j1 == j2)
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + orthogonality_tolerance
-            )
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - orthogonality_tolerance
-            )
-        else
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≤ 0.0 + orthogonality_tolerance
-            )
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≥ 0.0 - orthogonality_tolerance
-            )
+    if relaxation == "SDP"
+        model = Model(Mosek.Optimizer)
+        if solver_output == 0
+            set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
         end
+    elseif relaxation == "SOCP"
+        model = Model(Gurobi.Optimizer)
+        set_optimizer_attribute(model, "OutputFlag", solver_output)
     end
-
-    @objective(
-        model,
-        Min,
-        (1 / 2) * sum(
-            (X[i, j] - A[i, j])^2 * indices[i, j] 
-            for i = 1:n, j = 1:m
-        ) 
-        + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
-        + λ * sum(Y[i, i] for i = 1:n)
-    )
-
-    @suppress optimize!(model)
-
-    if JuMP.termination_status(model) in [
-        MOI.OPTIMAL,
-        MOI.LOCALLY_SOLVED, # TODO: verify if locally solved is okay
-    ]
-        return Dict(
-            "feasible" => true,
-            "objective" => objective_value(model),
-            "Y" => value.(Y),
-            "U" => value.(U),
-            "t" => value.(t),
-            "X" => value.(X),
-            "Θ" => value.(Θ),
-        )
-    elseif JuMP.termination_status(model) in [
-        MOI.INFEASIBLE,
-        MOI.DUAL_INFEASIBLE,
-        MOI.LOCALLY_INFEASIBLE,
-        MOI.INFEASIBLE_OR_UNBOUNDED,
-    ]
-        return Dict(
-            "feasible" => false,
-        )
-    else
-        error("""
-        unexpected termination status: $(JuMP.termination_status(model))
-        """)
-    end
-end
-
-function SOCP_relax_frob_matrixcomp(
-    U_lower::Array{Float64,2},
-    U_upper::Array{Float64,2},
-    A::Array{Float64,2},
-    indices::Array{Float64,2},
-    γ::Float64,
-    λ::Float64,
-    ;
-    orthogonality_tolerance::Float64 = 0.0,
-    solver_output::Int = 0,
-)
-    if !(
-        size(U_lower) == size(U_upper) 
-        && size(U_lower, 1) == size(U_upper, 1) == size(A, 1) == size(indices, 1) 
-        && size(A) == size(indices)
-    )
-        error("""
-        Dimension mismatch. 
-        Input matrix U_lower must have size (n, k); 
-        Input matrix U_upper must have size (n, k); 
-        Input matrix A must have size (n, m);
-        Input matrix indices must have size (n, m).
-        """)
-    end
-
-    (n, k) = size(U_lower)
-    (n, m) = size(A)
-
-    model = Model(Gurobi.Optimizer)
-    # if solver_output == 0
-    #     set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
-    # end
-    set_optimizer_attribute(model, "OutputFlag", solver_output)
 
     @variable(model, X[1:n, 1:m])
     @variable(model, Y[1:n, 1:n], Symmetric)
@@ -666,127 +519,133 @@ function SOCP_relax_frob_matrixcomp(
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
 
-    # Second-order cone constraints
-    
-    # TODO: see if can improve these by knowledge on bounds on U
+    if relaxation == "SDP"
+        @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
+        @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
 
-    # # Y[i,j]^2 <= Y[i,i] * Y[j,j]
-    # @constraint(model, 
-    #     [i in 1:n, j in i:n],
-    #     [
-    #         Y[i,i]; 
-    #         0.5 * Y[j,j]; 
-    #         Y[i,j]
-    #     ] in RotatedSecondOrderCone()
-    # )
-    # || 2 * Y[i,j]; Y[i,i] - Y[j,j] ||₂ ≤ Y[i,i] + Y[j,j]
-    @constraint(model, 
-        [i in 1:n, j in i:n],
-        [
-            Y[i,i] + Y[j,j];
-            Y[i,i] - Y[j,j];
-            2 * Y[i,j]
-        ] in SecondOrderCone()
-    )
-    
-    # # X[i,j]^2 <= Y[i,i] * Θ[j,j]
-    # @constraint(model, 
-    #     [i in 1:n, j in 1:m],
-    #     [
-    #         Y[i,i]; 
-    #         0.5 * Θ[j,j]; 
-    #         X[i,j]
-    #     ] in RotatedSecondOrderCone()
-    # )
-    # || 2 * X[i,j]; Y[i,i] - Θ[j,j] ||₂ ≤ Y[i,i] + Θ[j,j]
-    @constraint(model, 
-        [i in 1:n, j in 1:m],
-        [
-            Y[i,i] + Θ[j,j];
-            Y[i,i] - Θ[j,j];
-            2 * X[i,j]
-        ] in SecondOrderCone()
-    )
-    
-    # # Θ[i,j]^2 <= Θ[i,i] * Θ[j,j]
-    # @constraint(model, 
-    #     [i in 1:m, j in i:m],
-    #     [
-    #         Θ[i,i]; 
-    #         0.5 * Θ[j,j]; 
-    #         Θ[i,j]
-    #     ] in RotatedSecondOrderCone()
-    # )
-    # || 2 * Θ[i,j]; Θ[i,i] - Θ[j,j] ||₂ ≤ Θ[i,i] + Θ[j,j]
-    @constraint(model,
-        [i in 1:m, j in i:m],
-        [
-            Θ[i,i] + Θ[j,j];
-            Θ[i,i] - Θ[j,j];
-            2 * Θ[i,j]
-        ] in SecondOrderCone() 
-    )
-    
-    # # Y[i,i] >= sum(U[i,j]^2 for j in 1:k)
-    # @constraint(model, 
-    #     [i in 1:n],
-    #     [
-    #         Y[i,i]; 
-    #         0.5; 
-    #         U[i,:]
-    #     ] in RotatedSecondOrderCone()
-    # )
-    # || 2 * U[i,:]; Y[i,i] - 1 ||₂ ≤ Y[i,i] + 1
-    @constraint(model, 
-        [i in 1:n],
-        [
-            Y[i,i] + 1;
-            Y[i,i] - 1;
-            2 * U[i,:]
-        ] in SecondOrderCone()
-    )
+        @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
+    elseif relaxation == "SOCP"
+        # Second-order cone constraints
+        # TODO: see if can improve these by knowledge on bounds on U
 
-    # TODO: see if can improve these (McCormick-like) by knowledge on bounds on U
-    # (\alpha = +-1 currently but at other nodes? what is the current centerpoint of my box? if i linearize there do i get a better approx?)
+        # # Y[i,j]^2 <= Y[i,i] * Y[j,j]
+        # @constraint(model, 
+        #     [i in 1:n, j in i:n],
+        #     [
+        #         Y[i,i]; 
+        #         0.5 * Y[j,j]; 
+        #         Y[i,j]
+        #     ] in RotatedSecondOrderCone()
+        # )
+        # || 2 * Y[i,j]; Y[i,i] - Y[j,j] ||₂ ≤ Y[i,i] + Y[j,j]
+        @constraint(model, 
+            [i in 1:n, j in i:n],
+            [
+                Y[i,i] + Y[j,j];
+                Y[i,i] - Y[j,j];
+                2 * Y[i,j]
+            ] in SecondOrderCone()
+        )
 
-    # Adamturk and Gomez:
-    # # || U[i,:] + U[j,:] ||²₂ ≤ Y[i,i] + Y[j,j] + 2 * Y[i,j]
-    # @constraint(model, 
-    #     [i in 1:n, j in i:n],
-    #     [
-    #         Y[i,i] + Y[j,j] + 2 * Y[i,j];
-    #         0.5;
-    #         U[i,:] + U[j,:]
-    #     ] in RotatedSecondOrderCone()
-    # )
-    # # || U[i,:] - U[j,:] ||²₂ ≤ Y[i,i] + Y[j,j] - 2 * Y[i,j]
-    # @constraint(model, 
-    #     [i in 1:n, j in i:n],
-    #     [
-    #         Y[i,i] + Y[j,j] -+ 2 * Y[i,j];
-    #         0.5;
-    #         U[i,:] - U[j,:]
-    #     ] in RotatedSecondOrderCone()
-    # )
-    # || 2 * (U[i,:] + U[j,:]); Y[i,i] + Y[j,j] + 2 * Y[i,j] - 1 ||₂ ≤ Y[i,i] + Y[j,j] + 2 * Y[i,j] + 1
-    @constraint(model, 
-        [i in 1:n, j in i:n],
-        [
-            Y[i,i] + Y[j,j] + 2 * Y[i,j] + 1;
-            Y[i,i] + Y[j,j] + 2 * Y[i,j] - 1;
-            2 * (U[i,:] + U[j,:])
-        ] in SecondOrderCone()
-    )
-    # || 2 * (U[i,:] + U[j,:]); Y[i,i] + Y[j,j] - 2 * Y[i,j] - 1 ||₂ ≤ Y[i,i] + Y[j,j] - 2 * Y[i,j] + 1
-    @constraint(model, 
-        [i in 1:n, j in i:n],
-        [
-            Y[i,i] + Y[j,j] - 2 * Y[i,j] + 1;
-            Y[i,i] + Y[j,j] - 2 * Y[i,j] - 1;
-            2 * (U[i,:] - U[j,:])
-        ] in SecondOrderCone()
-    )
-    
+        # # X[i,j]^2 <= Y[i,i] * Θ[j,j]
+        # @constraint(model, 
+        #     [i in 1:n, j in 1:m],
+        #     [
+        #         Y[i,i]; 
+        #         0.5 * Θ[j,j]; 
+        #         X[i,j]
+        #     ] in RotatedSecondOrderCone()
+        # )
+        # || 2 * X[i,j]; Y[i,i] - Θ[j,j] ||₂ ≤ Y[i,i] + Θ[j,j]
+        @constraint(model, 
+            [i in 1:n, j in 1:m],
+            [
+                Y[i,i] + Θ[j,j];
+                Y[i,i] - Θ[j,j];
+                2 * X[i,j]
+            ] in SecondOrderCone()
+        )
+        
+        # # Θ[i,j]^2 <= Θ[i,i] * Θ[j,j]
+        # @constraint(model, 
+        #     [i in 1:m, j in i:m],
+        #     [
+        #         Θ[i,i]; 
+        #         0.5 * Θ[j,j]; 
+        #         Θ[i,j]
+        #     ] in RotatedSecondOrderCone()
+        # )
+        # || 2 * Θ[i,j]; Θ[i,i] - Θ[j,j] ||₂ ≤ Θ[i,i] + Θ[j,j]
+        @constraint(model,
+            [i in 1:m, j in i:m],
+            [
+                Θ[i,i] + Θ[j,j];
+                Θ[i,i] - Θ[j,j];
+                2 * Θ[i,j]
+            ] in SecondOrderCone() 
+        )
+        
+        # # Y[i,i] >= sum(U[i,j]^2 for j in 1:k)
+        # @constraint(model, 
+        #     [i in 1:n],
+        #     [
+        #         Y[i,i]; 
+        #         0.5; 
+        #         U[i,:]
+        #     ] in RotatedSecondOrderCone()
+        # )
+        # || 2 * U[i,:]; Y[i,i] - 1 ||₂ ≤ Y[i,i] + 1
+        @constraint(model, 
+            [i in 1:n],
+            [
+                Y[i,i] + 1;
+                Y[i,i] - 1;
+                2 * U[i,:]
+            ] in SecondOrderCone()
+        )
+
+        # TODO: see if can improve these (McCormick-like) by knowledge on bounds on U
+        # (\alpha = +-1 currently but at other nodes? what is the current centerpoint of my box? if i linearize there do i get a better approx?)
+
+        # Adamturk and Gomez:
+        # # || U[i,:] + U[j,:] ||²₂ ≤ Y[i,i] + Y[j,j] + 2 * Y[i,j]
+        # @constraint(model, 
+        #     [i in 1:n, j in i:n],
+        #     [
+        #         Y[i,i] + Y[j,j] + 2 * Y[i,j];
+        #         0.5;
+        #         U[i,:] + U[j,:]
+        #     ] in RotatedSecondOrderCone()
+        # )
+        # # || U[i,:] - U[j,:] ||²₂ ≤ Y[i,i] + Y[j,j] - 2 * Y[i,j]
+        # @constraint(model, 
+        #     [i in 1:n, j in i:n],
+        #     [
+        #         Y[i,i] + Y[j,j] -+ 2 * Y[i,j];
+        #         0.5;
+        #         U[i,:] - U[j,:]
+        #     ] in RotatedSecondOrderCone()
+        # )
+        # || 2 * (U[i,:] + U[j,:]); Y[i,i] + Y[j,j] + 2 * Y[i,j] - 1 ||₂ ≤ Y[i,i] + Y[j,j] + 2 * Y[i,j] + 1
+        @constraint(model, 
+            [i in 1:n, j in i:n],
+            [
+                Y[i,i] + Y[j,j] + 2 * Y[i,j] + 1;
+                Y[i,i] + Y[j,j] + 2 * Y[i,j] - 1;
+                2 * (U[i,:] + U[j,:])
+            ] in SecondOrderCone()
+        )
+        # || 2 * (U[i,:] + U[j,:]); Y[i,i] + Y[j,j] - 2 * Y[i,j] - 1 ||₂ ≤ Y[i,i] + Y[j,j] - 2 * Y[i,j] + 1
+        @constraint(model, 
+            [i in 1:n, j in i:n],
+            [
+                Y[i,i] + Y[j,j] - 2 * Y[i,j] + 1;
+                Y[i,i] + Y[j,j] - 2 * Y[i,j] - 1;
+                2 * (U[i,:] - U[j,:])
+            ] in SecondOrderCone()
+        )
+    end
+
     # Trace constraint on Y
     @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
 
