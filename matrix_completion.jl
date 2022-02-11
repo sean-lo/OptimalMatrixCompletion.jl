@@ -274,6 +274,9 @@ function branchandbound_frob_matrixcomp(
     end_time = time()
     time_taken = end_time - start_time
 
+    solution["MSE_in"] = compute_MSE(solution["X"], A, indices, kind = "in")
+    solution["MSE_out"] = compute_MSE(solution["X"], A, indices, kind = "out") 
+
     instance["run_details"] = Dict(
         "log_time" => log_time,
         "start_time" => start_time,
@@ -1216,8 +1219,6 @@ function angular_branchandbound_frob_matrixcomp(
                 solution["Y"] = copy(Y_relax)
                 solution["U"] = copy(U_relax)
                 solution["X"] = copy(X_relax)
-                solution["MSE_in"] = compute_MSE(X_relax, A, indices, kind = "in")
-                solution["MSE_out"] = compute_MSE(X_relax, A, indices, kind = "out")
                 now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
                 last_updated_counter = counter
             end
@@ -1268,6 +1269,9 @@ function angular_branchandbound_frob_matrixcomp(
 
     end_time = time()
     time_taken = end_time - start_time
+
+    solution["MSE_in"] = compute_MSE(solution["X"], A, indices, kind = "in")
+    solution["MSE_out"] = compute_MSE(solution["X"], A, indices, kind = "out") 
 
     instance["run_details"] = Dict(
         "log_time" => log_time,
