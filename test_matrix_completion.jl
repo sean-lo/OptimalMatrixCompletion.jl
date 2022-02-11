@@ -323,33 +323,19 @@ function test_branchandbound_frob_matrixcomp(
     indices = generate_masked_bitmatrix(n, m, n_indices)
 
     log_time = Dates.now()
-    if branching_type == "box"
-        solution, printlist, instance = branchandbound_frob_matrixcomp(
-            k,
-            A,
-            indices,
-            γ,
-            λ,
-            ;
-            relaxation = relaxation,
-            root_only = root_only,
-            max_steps = max_steps,
-            time_limit = time_limit,
-        )
-    elseif branching_type == "angular"
-        solution, printlist, instance = angular_branchandbound_frob_matrixcomp(
-            k,
-            A,
-            indices,
-            γ,
-            λ,
-            ;
-            relaxation = relaxation,
-            root_only = root_only,
-            max_steps = max_steps,
-            time_limit = time_limit,
-        )
-    end
+    solution, printlist, instance = branchandbound_frob_matrixcomp(
+        k,
+        A,
+        indices,
+        γ,
+        λ,
+        ;
+        relaxation = relaxation,
+        branching_type = branching_type,
+        root_only = root_only,
+        max_steps = max_steps,
+        time_limit = time_limit,
+    )
 
     if with_log
         time_string = Dates.format(log_time, "yyyymmdd_HHMMSS")

@@ -21,6 +21,7 @@ function branchandbound_frob_matrixcomp(
     λ::Float64,
     ;
     relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
+    branching_type::String = "box", # type of branching to use; either "box" or "angular"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     root_only::Bool = false, # if true, only solves relaxation at root node
     max_steps::Int = 1000000,
@@ -52,6 +53,12 @@ function branchandbound_frob_matrixcomp(
         error("""
         Invalid input for relaxation method.
         Relaxation must be either "SDP" or "SOCP".
+        """)
+    end
+    if !(branching_type in ["box", "angular"])
+        error("""
+        Invalid input for branching type.
+        Branching type must be either "box" or "angular".
         """)
     end
 
@@ -145,11 +152,17 @@ function branchandbound_frob_matrixcomp(
         "X" => X_initial,
     )
 
-    U_lower_initial = -ones(n, k)
-    U_lower_initial[n,:] .= 0.0
-    U_upper_initial = ones(n, k)
     node_id = 1
-    nodes = [(U_lower_initial, U_upper_initial, node_id)]
+    if branching_type == "box"
+        U_lower_initial = -ones(n, k)
+        U_lower_initial[n,:] .= 0.0
+        U_upper_initial = ones(n, k)
+        nodes = [(U_lower_initial, U_upper_initial, node_id)]
+    elseif branching_type == "angular"
+        φ_lower_initial = zeros(n-1, k)
+        φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
+        nodes = [(φ_lower_initial, φ_upper_initial, node_id)]
+    end
 
     upper = objective_initial
     lower = -Inf
@@ -167,13 +180,22 @@ function branchandbound_frob_matrixcomp(
         time() - start_time ≤ time_limit
     )
         if length(nodes) != 0
-            (U_lower, U_upper, node_id) = popfirst!(nodes)
+            if branching_type == "box"
+                (U_lower, U_upper, node_id) = popfirst!(nodes)
+            elseif branching_type == "angular"
+                (φ_lower, φ_upper, node_id) = popfirst!(nodes)
+            end
         else
             now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
             break
         end
 
         split_flag = true
+
+        if branching_type == "angular"
+            # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
+            (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
+        end
 
         if !(
             @suppress relax_feasibility_frob_matrixcomp(
@@ -234,17 +256,30 @@ function branchandbound_frob_matrixcomp(
         end
 
         # branch on variable
-        # for now: branch on biggest element-wise difference between U_lower and U_upper
-        (diff, index) = findmax(U_upper - U_lower)
-        mid = U_lower[index] + diff / 2
-        U_lower_new = copy(U_lower)
-        U_lower_new[index] = mid
-        U_upper_new = copy(U_upper)
-        U_upper_new[index] = mid
-        push!(nodes, (U_lower, U_upper_new, counter + 1))
-        push!(nodes, (U_lower_new, U_upper, counter + 2))
-        push!(ancestry, (node_id, [counter + 1, counter + 2]))
-        counter += 2
+        # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
+        if branching_type == "box"
+            (diff, index) = findmax(U_upper - U_lower)
+            mid = U_lower[index] + diff / 2
+            U_lower_new = copy(U_lower)
+            U_lower_new[index] = mid
+            U_upper_new = copy(U_upper)
+            U_upper_new[index] = mid
+            push!(nodes, (U_lower, U_upper_new, counter + 1))
+            push!(nodes, (U_lower_new, U_upper, counter + 2))
+            push!(ancestry, (node_id, [counter + 1, counter + 2]))
+            counter += 2
+        elseif branching_type == "angular"
+            (diff, index) = findmax(φ_upper - φ_lower)
+            mid = φ_lower[index] + diff / 2
+            φ_lower_new = copy(φ_lower)
+            φ_lower_new[index] = mid
+            φ_upper_new = copy(φ_upper)
+            φ_upper_new[index] = mid
+            push!(nodes, (φ_lower, φ_upper_new, counter + 1))
+            push!(nodes, (φ_lower_new, φ_upper, counter + 2))
+            push!(ancestry, (node_id, [counter + 1, counter + 2]))
+            counter += 2
+        end
 
         (anc_node_id, anc_children_node_ids) = ancestry[1]
         if all(haskey(lower_bounds, id) for id in anc_children_node_ids)
@@ -1006,310 +1041,6 @@ function compute_MSE(X, A, indices; kind = "out")
         Must be one of "out", "in", or "all".
         """)
     end
-end
-
-function angular_branchandbound_frob_matrixcomp(
-    k::Int,
-    A::Array{Float64,2},
-    indices::Array{Float64,2},
-    γ::Float64,
-    λ::Float64,
-    ;
-    relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
-    gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
-    root_only::Bool = false, # if true, only solves relaxation at root node
-    max_steps::Int = 1000000,
-    time_limit::Int = 3600, # time limit in seconds
-    update_step::Int = 1000,
-)
-
-
-    function add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
-        if (lower == -1e10 || upper == 1e10)
-            return
-        end
-        now_gap = abs((upper - lower) / (lower + 1e-10))
-        current_time_elapsed = time() - start_time
-        message = Printf.@sprintf(
-            "| %10d | %10d | %10f | %10f | %10f | %10.3f  s  |\n",
-            node_id, counter, lower, upper, now_gap, current_time_elapsed,
-        )
-        print(stdout, message)
-        push!(printlist, message)
-        push!(
-            instance["run_log"],
-            (node_id, counter, lower, upper, now_gap, current_time_elapsed)
-        )
-        return now_gap
-    end
-
-    if !(relaxation in ["SDP", "SOCP"])
-        error("""
-        Invalid input for relaxation method.
-        Relaxation must be either "SDP" or "SOCP".
-        """)
-    end
-
-    if !(size(A) == size(indices))
-        error("""
-        Dimension mismatch. 
-        Input matrix A must have size (n, m);
-        Input matrix indices must have size (n, m).
-        """)
-    end
-
-    log_time = Dates.now()
-
-    (n, m) = size(A)
-    printlist = [
-        Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), "\n",
-        "Starting branch-and-bound on a matrix completion problem.\n",
-        Printf.@sprintf("k:                 %10d\n", k),
-        Printf.@sprintf("m:                 %10d\n", m),
-        Printf.@sprintf("n:                 %10d\n", n),
-        Printf.@sprintf("num_indices:       %10d\n", sum(indices)),
-        Printf.@sprintf("γ:                 %10g\n", γ),
-        Printf.@sprintf("λ:                 %10g\n", λ),
-        Printf.@sprintf("Relaxation:        %10s\n", relaxation),
-        Printf.@sprintf("Branching type:    %10s\n", "angular"),
-        Printf.@sprintf("Optimality gap:    %10g\n", gap),
-        Printf.@sprintf("Maximum nodes:     %10d\n", max_steps),
-        Printf.@sprintf("Time limit (s):    %10d\n", time_limit),
-        "-----------------------------------------------------------------------------------\n",
-        "|   Explored |      Total |  Objective |  Incumbent |        Gap |    Runtime (s) |\n",
-        "-----------------------------------------------------------------------------------\n",
-    ]
-    for message in printlist
-        print(stdout, message)
-    end
-
-    instance = Dict()
-    instance["params"] = Dict(
-        "k" => k,
-        "m" => m,
-        "n" => n,
-        "A" => A,
-        "indices" => indices,
-        "num_indices" => convert(Int, round(sum(indices))),
-        "γ" => γ,
-        "λ" => λ,
-        "relaxation" => relaxation,
-        "branching_type" => "box",
-        "optimality_gap" => gap,
-        "max_steps" => max_steps,
-        "time_limit" => time_limit,
-    )
-    instance["run_log"] = DataFrame(
-        explored = Int[],
-        total = Int[],
-        objective = Float64[],
-        incumbent = Float64[],
-        gap = Float64[],
-        runtime = Float64[],
-    )
-
-    start_time = time()
-
-    # TODO: better initial Us?
-    U_altmin, V_altmin = @suppress alternating_minimization(
-        A, k, indices, γ, λ,
-    )
-    # do a re-SVD on U * V in order to recover orthonormal U
-    X_initial = U_altmin * V_altmin
-    U_initial, S_initial, V_initial = svd(X_initial) # TODO: implement truncated SVD
-    U_initial = U_initial[:,1:k]
-    Y_initial = U_initial * U_initial'
-    objective_initial = objective_function(
-        X_initial, A, indices, U_initial, γ, λ,
-    )
-    MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
-    MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
-    
-    solution = Dict(
-        "objective_initial" => objective_initial,
-        "MSE_in_initial" => MSE_in_initial,
-        "MSE_out_initial" => MSE_out_initial,
-        "Y_initial" => Y_initial,
-        "U_initial" => U_initial,
-        "X_initial" => X_initial,
-        "objective" => objective_initial,
-        "MSE_in" => MSE_in_initial,
-        "MSE_out" => MSE_out_initial,
-        "Y" => Y_initial,
-        "U" => U_initial,
-        "X" => X_initial,
-    )
-
-    φ_lower_initial = zeros(n-1, k)
-    φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
-
-    node_id = 1
-    nodes = [(φ_lower_initial, φ_upper_initial, node_id)]
-
-    upper = objective_initial
-    lower = -Inf
-
-    lower_bounds = Dict{Integer, Float64}()
-    ancestry = []
-
-    counter = 1
-    last_updated_counter = 1    
-    now_gap = 1e5
-
-    while (
-        now_gap > gap &&
-        counter < max_steps &&
-        time() - start_time ≤ time_limit
-    )
-        if length(nodes) != 0
-            (φ_lower, φ_upper, node_id) = popfirst!(nodes)
-        else
-            now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
-            break
-        end
-
-        split_flag = true
-
-        (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
-
-        # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
-        if !(
-            @suppress relax_feasibility_frob_matrixcomp(
-                U_lower, U_upper, relaxation
-            )
-        )
-            split_flag = false
-            continue
-        end
-
-        # solve SDP relaxation of master problem
-        if relaxation == "SDP"
-            relax_result = @suppress SDP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
-        elseif relaxation == "SOCP"
-            relax_result = @suppress SOCP_relax_frob_matrixcomp(U_lower, U_upper, A, indices, γ, λ)
-        end
-        
-        if relax_result["feasible"] == false
-            split_flag = false
-            continue
-        else
-            objective_relax = relax_result["objective"]
-            lower_bounds[node_id] = objective_relax
-            Y_relax = relax_result["Y"]
-            U_relax = relax_result["U"]
-            t_relax = relax_result["t"]
-            X_relax = relax_result["X"]
-            Θ_relax = relax_result["Θ"]
-            if node_id == 1
-                lower = objective_relax
-            end
-        end
-
-        # if solution for relax_result has higher objective than best found so far: prune the node
-        if objective_relax ≥ solution["objective"]
-            split_flag = false
-        end
-
-        # if solution for relax_result is feasible for original problem:
-        # prune this node;
-        # if it is the best found so far, update solution
-        if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, t_relax, X_relax, Θ_relax)
-            # if best found so far, update solution
-            if objective_relax < solution["objective"]
-                solution["objective"] = objective_relax
-                upper = objective_relax
-                solution["Y"] = copy(Y_relax)
-                solution["U"] = copy(U_relax)
-                solution["X"] = copy(X_relax)
-                now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
-                last_updated_counter = counter
-            end
-            split_flag = false
-        end
-
-        if split_flag == false
-            continue
-        end
-
-        # branch on variable
-        # branch on biggest element-wise difference between φ_lower and φ_upper
-        (diff, index) = findmax(φ_upper - φ_lower)
-        mid = φ_lower[index] + diff / 2
-        φ_lower_new = copy(φ_lower)
-        φ_lower_new[index] = mid
-        φ_upper_new = copy(φ_upper)
-        φ_upper_new[index] = mid
-        push!(nodes, (φ_lower, φ_upper_new, counter + 1))
-        push!(nodes, (φ_lower_new, φ_upper, counter + 2))
-        push!(ancestry, (node_id, [counter + 1, counter + 2]))
-        counter += 2
-
-        (anc_node_id, anc_children_node_ids) = ancestry[1]
-        if all(haskey(lower_bounds, id) for id in anc_children_node_ids)
-            popfirst!(ancestry)
-            pop!(lower_bounds, anc_node_id)
-            if minimum(values(lower_bounds)) > lower
-                lower = minimum(values(lower_bounds))
-                now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
-                last_updated_counter = counter
-            end
-        end
-
-        if node_id == 1
-            now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
-            last_updated_counter = counter
-            if root_only
-                break
-            end
-        end
-
-        if ((counter ÷ update_step) > (last_updated_counter ÷ update_step))
-            now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
-            last_updated_counter = counter
-        end
-    end
-
-    end_time = time()
-    time_taken = end_time - start_time
-
-    solution["MSE_in"] = compute_MSE(solution["X"], A, indices, kind = "in")
-    solution["MSE_out"] = compute_MSE(solution["X"], A, indices, kind = "out") 
-
-    instance["run_details"] = Dict(
-        "log_time" => log_time,
-        "start_time" => start_time,
-        "end_time" => end_time,
-        "time_taken" => time_taken,
-    )
-
-    push!(
-        printlist,
-        "\n\nInitial solution (warm start):\n",
-        sprint(show, "text/plain", objective_initial),
-        "\n\nMSE of sampled entries (warm start):\n",
-        sprint(show, "text/plain", MSE_in_initial),
-        "\n\nMSE of unsampled entries (warm start):\n",
-        sprint(show, "text/plain", MSE_out_initial),
-        "\n\nU:\n",
-        sprint(show, "text/plain", solution["U"]),
-        "\n\nY:\n",
-        sprint(show, "text/plain", solution["Y"]),
-        "\n\nX:\n",
-        sprint(show, "text/plain", solution["X"]),
-        "\n\nA:\n",
-        sprint(show, "text/plain", A),
-        "\n\nindices:\n",
-        sprint(show, "text/plain", indices),
-        "\n\nBest incumbent solution:\n",
-        sprint(show, "text/plain", solution["objective"]),
-        "\n\nMSE of sampled entries:\n",
-        sprint(show, "text/plain", solution["MSE_in"]),
-        "\n\nMSE of unsampled entries:\n",
-        sprint(show, "text/plain", solution["MSE_out"]),
-    )
-
-    return solution, printlist, instance
-
 end
 
 function φ_ranges_to_U_ranges(
