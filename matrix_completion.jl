@@ -342,20 +342,23 @@ function branchandbound_frob_matrixcomp(
 
 end
 
-function master_problem_frob_matrixcomp_feasible(Y, U, t, X, Θ)
-    if !(all(abs.(U' * U - I) .≤ 1e-5))
-        return false
-    end
-    if sum(Y[i,i] for i in 1:size(Y, 1)) > size(U, 2)
-        return false
-    end
-    if !(eigvals(Symmetric(Y - U * U'), 1:1)[1] ≥ -1e-6)
-        return false
-    end
-    if !(eigvals(Symmetric([Y X; X' Θ]), 1:1)[1] ≥ -1e-6)
-        return false
-    end
-    return true
+function master_problem_frob_matrixcomp_feasible(
+    Y, 
+    U, 
+    t, 
+    X, 
+    Θ,
+    ;
+    orthogonality_tolerance::Float64 = 0.0, # previous value 1e-5
+    projection_tolerance::Float64 = 0.0, # previous value 1e-6
+    lifted_variable_tolerance::Float64 = 0.0, # previous value 1e-6
+)
+    return (
+        all( (abs.(U' * U - I)) .≤ orthogonality_tolerance )
+        && sum(Y[i,i] for i in 1:size(Y,1)) ≤ size(U, 2)
+        && eigvals(Symmetric(Y - U * U'), 1:1)[1] ≥ - projection_tolerance
+        && eigvals(Symmetric([Y X; X' Θ]), 1:1)[1] ≥ - lifted_variable_tolerance
+    )
 end
 
 function relax_feasibility_frob_matrixcomp(
