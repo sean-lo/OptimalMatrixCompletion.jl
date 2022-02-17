@@ -365,6 +365,8 @@ function relax_feasibility_frob_matrixcomp(
     U_lower::Array{Float64,2},
     U_upper::Array{Float64,2},
     relaxation::String,
+    ;
+    orthogonality_tolerance::Float64 = 0.0,
 )
     if !(
         size(U_lower) == size(U_upper)
@@ -439,20 +441,20 @@ function relax_feasibility_frob_matrixcomp(
         if (j1 == j2)
             @constraint(
                 model,
-                sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + 1e-6
+                sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + orthogonality_tolerance
             )
             @constraint(
                 model,
-                sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - 1e-6
+                sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - orthogonality_tolerance
             )
         else
             @constraint(
                 model,
-                sum(t[i, j1, j2] for i = 1:n) ≤   1e-6
+                sum(t[i, j1, j2] for i = 1:n) ≤ 0.0 + orthogonality_tolerance
             )
             @constraint(
                 model,
-                sum(t[i, j1, j2] for i = 1:n) ≥ - 1e-6
+                sum(t[i, j1, j2] for i = 1:n) ≥ 0.0 - orthogonality_tolerance
             )
         end
     end
