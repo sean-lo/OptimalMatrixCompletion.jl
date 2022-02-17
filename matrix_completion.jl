@@ -80,7 +80,7 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("γ:                 %10g\n", γ),
         Printf.@sprintf("λ:                 %10g\n", λ),
         Printf.@sprintf("Relaxation:        %10s\n", relaxation),
-        Printf.@sprintf("Branching type:    %10s\n", "box"),
+        Printf.@sprintf("Branching type:    %10s\n", branching_type),
         Printf.@sprintf("Optimality gap:    %10g\n", gap),
         Printf.@sprintf("Maximum nodes:     %10d\n", max_steps),
         Printf.@sprintf("Time limit (s):    %10d\n", time_limit),
