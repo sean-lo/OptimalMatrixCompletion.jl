@@ -465,7 +465,7 @@ function relax_feasibility_frob_matrixcomp(
         0
     )
 
-    @suppress optimize!(model)
+    optimize!(model)
 
     return (JuMP.termination_status(model) == MOI.OPTIMAL)
 end
@@ -726,7 +726,7 @@ function relax_frob_matrixcomp(
         + λ * sum(Y[i, i] for i = 1:n)
     )
 
-    @suppress optimize!(model)
+    optimize!(model)
 
     if JuMP.termination_status(model) in [
         MOI.OPTIMAL,
@@ -788,7 +788,7 @@ function alternating_minimization(
                 for i in 1:n, j in 1:m
             )
         )
-        @suppress optimize!(model)
+        optimize!(model)
         return value.(U), objective_value(model)
     end
 
@@ -813,7 +813,7 @@ function alternating_minimization(
                 for i in 1:n, j in 1:m
             )
         )
-        @suppress optimize!(model)
+        optimize!(model)
         return value.(W), objective_value(model)
     end
 
