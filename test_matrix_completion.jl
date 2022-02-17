@@ -7,17 +7,6 @@ using DataFrames
 include("matrix_completion.jl")
 include("utils.jl")
 
-function generate_masked_bitmatrix(
-    dim1::Int,
-    dim2::Int,
-    sparsity::Int,
-)
-    index_pairs = randperm(dim1 * dim2)[1:sparsity]
-    index_vec = zeros(dim1 * dim2)
-    index_vec[index_pairs] .= 1.0
-    return reshape(index_vec, (dim1, dim2))
-end
-
 function test_relax_frob_matrixcomp(
     k::Int,
     m::Int,
