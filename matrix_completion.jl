@@ -206,7 +206,11 @@ function branchandbound_frob_matrixcomp(
         if relax_result["feasible"] == false
             split_flag = false
             continue
-        else
+        elseif relax_result["termination_status"] in [
+            MOI.OPTIMAL,
+            MOI.LOCALLY_SOLVED,
+            MOI.SLOW_PROGRESS # TODO: investigate this
+        ]
             objective_relax = relax_result["objective"]
             lower_bounds[node_id] = objective_relax
             Y_relax = relax_result["Y"]
@@ -737,12 +741,21 @@ function relax_frob_matrixcomp(
 
     optimize!(model)
 
-    if JuMP.termination_status(model) in [
-        MOI.OPTIMAL,
-        MOI.LOCALLY_SOLVED, # TODO: verify if locally solved is okay
-    ]
+    if JuMP.termination_status(model) == MOI.OPTIMAL
         return Dict(
             "feasible" => true,
+            "termination_status" => JuMP.termination_status(model),
+            "objective" => objective_value(model),
+            "Y" => value.(Y),
+            "U" => value.(U),
+            "t" => value.(t),
+            "X" => value.(X),
+            "Θ" => value.(Θ),
+        )
+    elseif JuMP.termination_status(model) == MOI.LOCALLY_SOLVED
+        return Dict(
+            "feasible" => true,
+            "termination_status" => JuMP.termination_status(model),
             "objective" => objective_value(model),
             "Y" => value.(Y),
             "U" => value.(U),
@@ -758,7 +771,27 @@ function relax_frob_matrixcomp(
     ]
         return Dict(
             "feasible" => false,
+            "termination_status" => JuMP.termination_status(model),
         )
+    elseif JuMP.termination_status(model) == MOI.SLOW_PROGRESS
+        if has_values(model)
+            return Dict(
+                "feasible" => true,
+                "termination_status" => JuMP.termination_status(model),
+                "objective" => objective_value(model),
+                "Y" => value.(Y),
+                "U" => value.(U),
+                "t" => value.(t),
+                "X" => value.(X),
+                "Θ" => value.(Θ),
+            )
+        else
+            return Dict(
+                "feasible" => false,
+                "termination_status" => JuMP.termination_status(model),
+                "model" => model,
+            )
+        end
     else
         error("""
         unexpected termination status: $(JuMP.termination_status(model))
