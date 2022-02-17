@@ -31,10 +31,7 @@ function branchandbound_frob_matrixcomp(
 
 
     function add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
-        if (lower == -1e10 || upper == 1e10)
-            return
-        end
-        now_gap = abs((upper - lower) / (lower + 1e-10))
+        now_gap = (upper / lower) - 1
         current_time_elapsed = time() - start_time
         message = Printf.@sprintf(
             "| %10d | %10d | %10f | %10f | %10f | %10.3f  s  |\n",
