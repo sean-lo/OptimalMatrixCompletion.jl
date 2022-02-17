@@ -181,6 +181,8 @@ function branchandbound_frob_matrixcomp(
                 (U_lower, U_upper, node_id) = popfirst!(nodes)
             elseif branching_type == "angular"
                 (φ_lower, φ_upper, node_id) = popfirst!(nodes)
+                # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
+                (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
             end
         else
             now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
@@ -188,11 +190,6 @@ function branchandbound_frob_matrixcomp(
         end
 
         split_flag = true
-
-        if branching_type == "angular"
-            # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
-            (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
-        end
 
         if !(
             @suppress relax_feasibility_frob_matrixcomp(
