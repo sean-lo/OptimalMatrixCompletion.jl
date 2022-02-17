@@ -459,6 +459,12 @@ function relax_feasibility_frob_matrixcomp(
         end
     end
 
+    @constraint(
+        model,
+        [i = 1:n, j1 = 2:k, j2 = 1:(j1-1)],
+        t[i,j1,j2] == 0.0
+    )
+
     @objective(
         model,
         Min,
@@ -714,6 +720,12 @@ function relax_frob_matrixcomp(
             )
         end
     end
+    
+    @constraint(
+        model,
+        [i = 1:n, j1 = 2:k, j2 = 1:(j1-1)],
+        t[i,j1,j2] == 0.0
+    )
 
     @objective(
         model,
