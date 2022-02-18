@@ -19,12 +19,19 @@ function test_relax_frob_matrixcomp(
     γ::Float64 = 1.0,
     λ::Float64 = 1.0,
     relaxation::String = "SDP",
+    branching_type::String = "angular",
     solver_output::Int = 1,
 )
     if !(relaxation in ["SDP", "SOCP"])
         error("""
         Invalid input for relaxation method.
         Relaxation must be either "SDP" or "SOCP".
+        """)
+    end
+    if !(branching_type in ["box", "angular", "polyhedral"])
+        error("""
+        Invalid input for branching type.
+        Branching type must be either "box" or "angular" or "polyhedral".
         """)
     end
     if n_indices < (n + m) * k
@@ -43,14 +50,14 @@ function test_relax_frob_matrixcomp(
     indices = generate_masked_bitmatrix(n, m, n_indices)
 
     return relax_frob_matrixcomp(
-        relaxation,
-        U_lower,
-        U_upper,
+        n, k, relaxation, branching_type,
         A,
         indices,
         γ,
         λ,
         ;
+        U_lower = U_lower,
+        U_upper = U_upper,
         solver_output = solver_output,
     )
 end
@@ -274,14 +281,16 @@ function test_branchandbound_frob_matrixcomp(
     time_limit::Int = 3600,
     with_log::Bool = true,
 )
-    if !(
-        relaxation in ["SDP", "SOCP"]
-        && branching_type in ["box", "angular"]
-    )
+    if !(relaxation in ["SDP", "SOCP"])
         error("""
-        Invalid argument.
-        Input argument relaxation must be one of "SDP", "SOCP".
-        Input argument branching_type must be one of "box", "angular".        
+        Invalid input for relaxation method.
+        Relaxation must be either "SDP" or "SOCP".
+        """)
+    end
+    if !(branching_type in ["box", "angular", "polyhedral"])
+        error("""
+        Invalid input for branching type.
+        Branching type must be either "box" or "angular" or "polyhedral".
         """)
     end
     if n_indices < (n + m) * k
@@ -335,7 +344,7 @@ function run_experiments(
     γ_ranges = [1.0],
     λ_ranges = [1.0],
     relaxation_ranges = ["SDP", "SOCP"],
-    branching_type_ranges = ["angular", "box"],
+    branching_type_ranges = ["angular", "box", "polyhedral"],
     max_steps = 10000,
     time_limit = 3600,
 )
@@ -347,7 +356,7 @@ function run_experiments(
         γ_ranges, 
     )
         try
-            solution, printlist, instance =     test_branchandbound_frob_matrixcomp(
+            solution, printlist, instance = test_branchandbound_frob_matrixcomp(
                 k, m, n, n_indices, seed,
                 γ = γ, λ = λ, 
                 relaxation = relaxation, 
