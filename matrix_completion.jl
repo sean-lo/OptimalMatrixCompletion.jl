@@ -234,9 +234,32 @@ function branchandbound_frob_matrixcomp(
             continue
         elseif relax_result["termination_status"] in [
             MOI.OPTIMAL,
-            MOI.LOCALLY_SOLVED,
+            MOI.LOCALLY_SOLVED, # TODO: investigate this
             MOI.SLOW_PROGRESS # TODO: investigate this
         ]
+            ## TODO: comment these sections on/off to debug MOI.LOCALLY_SOLVED and MOI.SLOW_PROGRESS
+            if relax_result["termination_status"] == MOI.SLOW_PROGRESS
+                error("""
+                Unexpected termination status code: MOI.SLOW_PROGRESS;
+                k: $k
+                m: $m
+                n: $n
+                num_indices: $(convert(Int, round(sum(indices))))
+                relaxation: $relaxation
+                branching_type: $branching_type
+                """)
+            end
+            if relax_result["termination_status"] == MOI.LOCALLY_SOLVED
+                error("""
+                Unexpected termination status code: MOI.LOCALLY_SOLVED;
+                k: $k
+                m: $m
+                n: $n
+                num_indices: $(convert(Int, round(sum(indices))))
+                relaxation: $relaxation
+                branching_type: $branching_type
+                """)
+            end
             objective_relax = relax_result["objective"]
             lower_bounds[node_id] = objective_relax
             Y_relax = relax_result["Y"]
