@@ -1043,3 +1043,132 @@ function φ_ranges_to_U_ranges(
 
     return (U_lower, U_upper)
 end
+
+function product_ranges(
+    a_L::Float64,
+    a_U::Float64,
+    b_L::Float64,
+    b_U::Float64,
+)
+    if !(
+        a_L ≤ a_U
+        && b_L ≤ b_U
+    )
+        error("""
+        Domain error.
+        """)
+    end
+    if 0 ≤ a_L
+        if 0 ≤ b_L
+            return [a_L * b_L, a_U * b_U]
+        elseif b_U ≤ 0
+            return [a_U * b_L, a_L * b_U]
+        else # b_L < 0 < b_U
+            return [a_U * b_L, a_U * b_U]
+        end
+    elseif a_U ≤ 0
+        if 0 ≤ b_L
+            return [a_L * b_U, a_U * b_L]
+        elseif b_U ≤ 0
+            return [a_U * b_U, a_L * b_L]
+        else # b_L < 0 < b_U
+            return [a_L * b_U, a_L * b_L]
+        end
+    else # a_L < 0 < a_U
+        if 0 ≤ b_L
+            return [a_L * b_U, a_U * b_U]
+        elseif b_U ≤ 0
+            return [a_U * b_L, a_L * b_L]
+        else # b_L < 0 < b_U
+            return [min(a_U * b_L, a_L * b_U), max(a_L * b_L, a_U * b_U)]
+        end
+    end
+end
+
+function φ_ranges_to_polyhedra(
+    φ_lower::Array{Float64,2}, 
+    φ_upper::Array{Float64,2}, 
+)
+    
+    function angles_to_vector(
+        ϕ::Vector{Float64},
+    )
+        n = size(ϕ, 1) + 1
+        vector = ones(n)
+        for (i, a) in enumerate(ϕ)
+            (c, s) = (cos(a), sin(a))
+            vector[i] *= c
+            for j in (i+1):n
+                vector[j] *= s
+            end
+        end
+        return vector
+    end
+
+    function index_to_angles(
+        α::Vector{Int},
+        gamma::Int,
+    )
+        return [a * pi / 2^gamma for a in α]
+    end
+
+    function angles_to_facet(
+        ϕ1::Vector{Float64}, 
+        ϕ2::Vector{Float64},
+    )
+        return [
+            angles_to_vector(collect(β))
+            for β in Iterators.product(
+                collect(
+                    Iterators.zip(ϕ1, ϕ2)
+                )...
+            )
+        ]
+    end
+
+    function indexes_to_facet(
+        α1::Vector{Int},
+        α2::Vector{Int},
+        gamma::Int,
+    )
+        return angles_to_facet(
+            index_to_angles(α1, gamma), 
+            index_to_angles(α2, gamma),
+        )
+    end
+
+    function facet_to_pol(f)
+        p = polyhedron(
+            conichull(f...) 
+            + convexhull(f...)
+        )
+        for knot in f
+            p = p ∩ HalfSpace(knot, 1)
+        end
+        return p
+    end
+    
+    if !(
+        size(φ_lower) == size(φ_upper)
+    )
+        error("""
+        Dimension mismatch.
+        Input matrix φ_lower must have size (n-1, k); 
+        Input matrix φ_upper must have size (n-1, k).
+        """)
+    end
+
+    n = size(φ_lower, 1) + 1
+    k = size(φ_lower, 2)
+    
+    polyhedra = [
+        facet_to_pol(
+            angles_to_facet(
+                φ_lower[:,j],
+                φ_upper[:,j],
+            )
+        )
+        for j in 1:k
+    ]
+    return polyhedra
+end
