@@ -39,7 +39,7 @@ function test_relax_frob_matrixcomp(
         """)
     end
     Random.seed!(seed)
-    A = randn(Float64, (n, m))
+    A = randn(Float64, (n, k)) * randn(Float64, (k, m))
     indices = generate_masked_bitmatrix(n, m, n_indices)
 
     return relax_frob_matrixcomp(
@@ -199,7 +199,7 @@ function test_alternating_minimization(
         """)
     end
     Random.seed!(seed)
-    A = randn(Float64, (n, m))
+    A = randn(Float64, (n, k)) * randn(Float64, (k, m))
     indices = generate_masked_bitmatrix(n, m, n_indices)
 
     return alternating_minimization(
@@ -296,7 +296,7 @@ function test_branchandbound_frob_matrixcomp(
         """)
     end
     Random.seed!(seed)
-    A = randn(Float64, (n, m))
+    A = randn(Float64, (n, k)) * randn(Float64, (k, m))
     indices = generate_masked_bitmatrix(n, m, n_indices)
 
     log_time = Dates.now()
