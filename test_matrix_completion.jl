@@ -62,6 +62,40 @@ function test_relax_frob_matrixcomp(
     )
 end
 
+U_lower = reshape(
+    [-0.11767578125, 
+    -0.91943359375, 
+    0.29931640625, 
+    -0.22509765625, 
+    0.0263671875],
+    (5,1),
+)
+U_upper = reshape(
+    [-0.1171875, 
+    -0.9189453125, 
+    0.2998046875, 
+    -0.224609375, 
+    0.02685546875],
+    (5,1),
+)
+
+r = test_relax_frob_matrixcomp(
+    1, 4, 5, 10, 1, 
+    U_lower, U_upper,
+)
+
+raw_status(r["model"])
+
+
+primal_status(r["model"])
+
+has_values(r["model"])
+
+objective_value(r["model"])
+dual_objective_value(r["model"])
+
+primal_feasibility_report(r["model"])
+
 include("matrix_completion.jl");
 
 # example with solution infeasible for original
@@ -378,9 +412,48 @@ run_experiments(
     γ_ranges = [1.0],
     λ_ranges = [1.0],
     relaxation_ranges = ["SDP"],
-    branching_type_ranges = ["angular"],
+    branching_type_ranges = ["polyhedral"],
     max_steps = 100000,
     time_limit = 240,
+)
+
+run_experiments(
+    1, 4, 5, 10, 0:4;
+    γ_ranges = [1.0, 2.0, 0.5, 5.0, 0.2],
+    λ_ranges = [1.0],
+    relaxation_ranges = ["SDP"],
+    branching_type_ranges = ["angular", "polyhedral"],
+    max_steps = 100000,
+    time_limit = 240,
+)
+run_experiments(
+    1, 5, 6, 15, 0:4;
+    γ_ranges = [1.0, 2.0, 0.5, 5.0, 0.2],
+    λ_ranges = [1.0],
+    relaxation_ranges = ["SDP"],
+    branching_type_ranges = ["angular", "polyhedral"],
+    max_steps = 100000,
+    time_limit = 240,
+)
+
+run_experiments(
+    1, 6, 7, 21, 0:4;
+    γ_ranges = [1.0, 2.0, 0.5, 5.0, 0.2],
+    λ_ranges = [1.0],
+    relaxation_ranges = ["SDP"],
+    branching_type_ranges = ["angular", "polyhedral"],
+    max_steps = 100000,
+    time_limit = 480,
+)
+
+run_experiments(
+    1, 10, 20, 100, 0:4;
+    γ_ranges = [1.0],
+    λ_ranges = [1.0],
+    relaxation_ranges = ["SDP"],
+    branching_type_ranges = ["angular", "polyhedral"],
+    max_steps = 1000000,
+    time_limit = 1200,
 )
 
 run_experiments(
@@ -403,7 +476,176 @@ run_experiments(
     time_limit = 600,
 )
 
-result = test_branchandbound_frob_matrixcomp(1,3,4,8,1, time_limit = 120, max_steps = 10000, root_only = true)
+function test_angular_box_branchandbound_frob_matrixcomp(
+    k, m, n, n_indices, seeds,
+    ;
+    γ::Float64 = 1.0,
+    λ::Float64 = 1.0,
+    relaxation::String = "SDP",
+    max_steps::Int = 10000,
+    time_limit::Int = 3600,
+)
+    for seed in seeds
+        angular_results = test_branchandbound_frob_matrixcomp(
+            k, m, n, n_indices, seed,
+            γ = γ, λ = λ,
+            time_limit = time_limit, max_steps = max_steps,
+            relaxation = relaxation,
+            branching_type = "angular", root_only = false,
+        )
+        angular_run_log = angular_results[3]["run_log"]
+        CSV.write("logs/angular_box_time_gap/angular_$(relaxation)_$(k)_$(m)_$(n)_$(n_indices)_$(seed)_$(γ)_$(λ).csv", angular_run_log)
+        box_results = test_branchandbound_frob_matrixcomp(
+            k, m, n, n_indices, seed,
+            γ = γ, λ = λ,
+            time_limit = time_limit, max_steps = max_steps,
+            relaxation = relaxation,
+            branching_type = "box", root_only = false,
+        )
+        box_run_log = box_results[3]["run_log"]
+        CSV.write("logs/angular_box_time_gap/box_$(relaxation)_$(k)_$(m)_$(n)_$(n_indices)_$(seed)_$(γ)_$(λ).csv", box_run_log)
+
+        plot(fmt = :png, yaxis = :log)
+        plot!(angular_run_log[:,"runtime"], angular_run_log[:, "gap"], label = "angular")
+        plot!(box_run_log[:,"runtime"], box_run_log[:, "gap"], label = "box")
+        xlabel!("Time (s)")
+        ylabel!("Optimality gap (%)")
+        title!("k = $k, m = $m, n = $n, n_indices = $n_indices, seed = $seed, γ = $γ, λ = $λ, $relaxation")
+        savefig("plots/angular_box_time_gap_$(relaxation)_$(k)_$(m)_$(n)_$(n_indices)_$(seed)_$(γ)_$(λ).png")
+    end
+end
+
+test_angular_box_branchandbound_frob_matrixcomp(
+    1, 4, 5, 10, [0,1,2,3,4],
+    γ = 10.0, λ = 1.0,
+    relaxation = "SDP",
+    time_limit = 120, max_steps = 10000,
+)
+test_angular_box_branchandbound_frob_matrixcomp(
+    1, 4, 5, 10, [0,1,2,3,4],
+    γ = 2.0, λ = 1.0,
+    relaxation = "SDP",
+    time_limit = 120, max_steps = 10000,
+)
+test_angular_box_branchandbound_frob_matrixcomp(
+    1, 4, 5, 10, [0,1,2,3,4],
+    γ = 1.0, λ = 1.0,
+    relaxation = "SDP",
+    time_limit = 120, max_steps = 10000,
+)
+
+test_angular_box_branchandbound_frob_matrixcomp(
+    1, 4, 5, 10, [0,1,2,3,4],
+    γ = 0.5, λ = 1.0,
+    relaxation = "SDP",
+    time_limit = 120, max_steps = 10000,
+)
+test_angular_box_branchandbound_frob_matrixcomp(
+    1, 4, 5, 10, [0,1,2,3,4],
+    γ = 0.1, λ = 1.0,
+    relaxation = "SDP",
+    time_limit = 120, max_steps = 10000,
+)
+
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,0, branching_type = "angular", time_limit = 120, max_steps = 100000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,0, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+angular_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+angular_run_log = angular_result[3]["run_log"]
+plot(angular_run_log[:,"runtime"], angular_run_log[:, "gap"], yaxis=:log)
+
+include("matrix_completion.jl")
+
+
+polyhedral_SDP_result = test_branchandbound_frob_matrixcomp(1,5,6,15,1, branching_type = "polyhedral", relaxation = "SDP", time_limit = 120, max_steps = 10000, root_only = false)
+polyhedral_SDP_result = test_branchandbound_frob_matrixcomp(1,6,7,21,1, branching_type = "polyhedral", relaxation = "SDP", time_limit = 240, max_steps = 10000, root_only = false)
+polyhedral_SDP_result = test_branchandbound_frob_matrixcomp(1,7,8,28,2, branching_type = "polyhedral", relaxation = "SDP", time_limit = 480, max_steps = 10000, root_only = false)
+
+
+
+
+polyhedral_SOCP_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "polyhedral", relaxation = "SOCP", time_limit = 120, max_steps = 10000, root_only = false)
+polyhedral_SDP_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "polyhedral", relaxation = "SDP", time_limit = 120, max_steps = 10000, root_only = false)
+
+
+# not converged
+angular_SOCP_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "angular", relaxation = "SOCP", time_limit = 120, max_steps = 10000, root_only = false)
+# converged
+angular_SDP_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "angular", relaxation = "SDP", time_limit = 120, max_steps = 10000, root_only = false)
+# not converged
+box_SOCP_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "box", relaxation = "SOCP", time_limit = 120, max_steps = 10000, root_only = false)
+# errored: SLOW_PROGRESS
+box_SDP_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "box", relaxation = "SDP", time_limit = 120, max_steps = 10000, root_only = false)
+
+stacktrace()
+
+box_result = test_branchandbound_frob_matrixcomp(1,4,5,10,3, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+box_run_log = box_result[3]["run_log"]
+plot!(box_run_log[:,"runtime"], box_run_log[:, "gap"], yaxis=:log)
+
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,2, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,2, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,3, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,3, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,4, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,4, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,5, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,4,5,10,5, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,5,6,15,0, branching_type = "angular", time_limit = 240, max_steps = 100000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,5,6,15,1, branching_type = "angular", time_limit = 240, max_steps = 100000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,5,6,15,2, branching_type = "angular", time_limit = 240, max_steps = 100000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,5,6,15,3, branching_type = "angular", time_limit = 240, max_steps = 100000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,5,6,15,4, branching_type = "angular", time_limit = 240, max_steps = 100000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,5,6,15,5, branching_type = "angular", time_limit = 240, max_steps = 100000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,5,6,15,6, branching_type = "angular", time_limit = 240, max_steps = 100000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,3,4,8,5, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,3,4,8,5, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,3,5,9,0, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,3,5,9,0, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,3,5,9,1, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,3,5,9,1, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,5,6,24,0, branching_type = "angular", time_limit = 120, max_steps = 10000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,5,6,24,0, branching_type = "box", time_limit = 120, max_steps = 10000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,5,6,24,1, branching_type = "angular", time_limit = 240, max_steps = 50000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,5,6,24,1, branching_type = "box", time_limit = 240, max_steps = 50000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,6,8,24,1, branching_type = "angular", time_limit = 240, max_steps = 50000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,6,8,24,1, branching_type = "box", time_limit = 240, max_steps = 50000, root_only = false)
+
+angular_times = Dict()
+for n in [4, 5, 6, 8, 10, 12, 15, 18, 20, 24, 30, 36, 42, 50]
+    try
+        solution, printlist, instance = test_branchandbound_frob_matrixcomp(
+            1, n, n+1, Int(n * (n+1) // 2), 0,
+            γ = 0.5,
+            branching_type = "angular", 
+            time_limit = 3600, 
+            max_steps = 1000000, 
+            root_only = false,
+        )
+    e
+    time_taken = instance["run_details"]["time_taken"]
+    println("$n: $time_taken")
+    angular_times[n] = time_taken
+end
+
+result = test_branchandbound_frob_matrixcomp(1,10,15,50,0, branching_type = "angular", time_limit = 600, max_steps = 50000, root_only = false)
+result = test_branchandbound_frob_matrixcomp(1,10,15,50,0, branching_type = "box", time_limit = 600, max_steps = 50000, root_only = false)
+
+result = test_branchandbound_frob_matrixcomp(1,3,4,8,1, time_limit = 120, max_steps = 10000, root_only = false)
 
 result = test_branchandbound_frob_matrixcomp(1,3,4,8,1, time_limit = 120, max_steps = 10000)
 
