@@ -309,7 +309,7 @@ function test_branchandbound_frob_matrixcomp(
     γ::Float64 = 1.0,
     λ::Float64 = 1.0,
     relaxation::String = "SDP",
-    branching_type::String = "box",
+    branching_type::String = "angular",
     root_only::Bool = false,
     max_steps::Int = 10000,
     time_limit::Int = 3600,
