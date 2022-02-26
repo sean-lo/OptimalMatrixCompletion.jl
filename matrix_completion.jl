@@ -12,6 +12,7 @@ using MathOptInterface
 using Gurobi
 using Mosek
 using MosekTools
+using Polyhedra
 
 function branchandbound_frob_matrixcomp(
     k::Int,
@@ -49,13 +50,13 @@ function branchandbound_frob_matrixcomp(
     if !(relaxation in ["SDP", "SOCP"])
         error("""
         Invalid input for relaxation method.
-        Relaxation must be either "SDP" or "SOCP".
+        Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
         """)
     end
-    if !(branching_type in ["box", "angular"])
+    if !(branching_type in ["box", "angular", "polyhedral"])
         error("""
         Invalid input for branching type.
-        Branching type must be either "box" or "angular".
+        Branching type must be either "box" or "angular" or "polyhedral"; $branching_type supplied instead.
         """)
     end
 
@@ -103,7 +104,7 @@ function branchandbound_frob_matrixcomp(
         "γ" => γ,
         "λ" => λ,
         "relaxation" => relaxation,
-        "branching_type" => "box",
+        "branching_type" => branching_type,
         "optimality_gap" => gap,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
@@ -159,6 +160,10 @@ function branchandbound_frob_matrixcomp(
         φ_lower_initial = zeros(n-1, k)
         φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
         nodes = [(φ_lower_initial, φ_upper_initial, node_id)]
+    elseif branching_type == "polyhedral"
+        φ_lower_initial = zeros(n-1, k)
+        φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
+        nodes = [(φ_lower_initial, φ_upper_initial, node_id)]
     end
 
     upper = objective_initial
@@ -183,6 +188,9 @@ function branchandbound_frob_matrixcomp(
                 (φ_lower, φ_upper, node_id) = popfirst!(nodes)
                 # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
                 (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
+            elseif branching_type == "polyhedral"
+                (φ_lower, φ_upper, node_id) = popfirst!(nodes)
+                polyhedra = φ_ranges_to_polyhedra(φ_lower, φ_upper)
             end
         else
             now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
@@ -191,26 +199,67 @@ function branchandbound_frob_matrixcomp(
 
         split_flag = true
 
-        if !(
-            @suppress relax_feasibility_frob_matrixcomp(
-                U_lower, U_upper, relaxation
+        if branching_type in ["box", "angular"]
+            if !(
+                @suppress relax_feasibility_frob_matrixcomp(
+                    n, k, relaxation, branching_type;
+                    U_lower = U_lower, 
+                    U_upper = U_upper
+                )
             )
-        )
-            split_flag = false
-            continue
+                split_flag = false
+                continue
+            end
+        elseif branching_type == "polyhedral"
+            if !(
+                @suppress relax_feasibility_frob_matrixcomp(
+                    n, k, relaxation, branching_type;
+                    polyhedra = polyhedra
+                )
+            )
+                split_flag = false
+                continue
+            end
         end
 
         # solve SDP / SOCP relaxation of master problem
-        relax_result = @suppress relax_frob_matrixcomp(relaxation, U_lower, U_upper, A, indices, γ, λ)
+        if branching_type in ["box", "angular"]
+            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper)
+        elseif branching_type == "polyhedral"
+            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; polyhedra = polyhedra)
+        end
         
         if relax_result["feasible"] == false
             split_flag = false
             continue
         elseif relax_result["termination_status"] in [
             MOI.OPTIMAL,
-            MOI.LOCALLY_SOLVED,
+            MOI.LOCALLY_SOLVED, # TODO: investigate this
             MOI.SLOW_PROGRESS # TODO: investigate this
         ]
+            ## TODO: comment these sections on/off to debug MOI.LOCALLY_SOLVED and MOI.SLOW_PROGRESS
+            if relax_result["termination_status"] == MOI.SLOW_PROGRESS
+                error("""
+                Unexpected termination status code: MOI.SLOW_PROGRESS;
+                k: $k
+                m: $m
+                n: $n
+                num_indices: $(convert(Int, round(sum(indices))))
+                relaxation: $relaxation
+                branching_type: $branching_type
+                """)
+            end
+            if relax_result["termination_status"] == MOI.LOCALLY_SOLVED
+                error("""
+                Unexpected termination status code: MOI.LOCALLY_SOLVED;
+                k: $k
+                m: $m
+                n: $n
+                num_indices: $(convert(Int, round(sum(indices))))
+                relaxation: $relaxation
+                branching_type: $branching_type
+                """)
+            end
             objective_relax = relax_result["objective"]
             lower_bounds[node_id] = objective_relax
             Y_relax = relax_result["Y"]
@@ -262,7 +311,7 @@ function branchandbound_frob_matrixcomp(
             push!(nodes, (U_lower_new, U_upper, counter + 2))
             push!(ancestry, (node_id, [counter + 1, counter + 2]))
             counter += 2
-        elseif branching_type == "angular"
+        elseif branching_type in ["angular", "polyhedral"]
             (diff, index) = findmax(φ_upper - φ_lower)
             mid = φ_lower[index] + diff / 2
             φ_lower_new = copy(φ_lower)
@@ -363,19 +412,45 @@ function master_problem_frob_matrixcomp_feasible(
 end
 
 function relax_feasibility_frob_matrixcomp(
-    U_lower::Array{Float64,2},
-    U_upper::Array{Float64,2},
+    n::Int,
+    k::Int,
     relaxation::String,
+    branching_type::String,
     ;
+    U_lower::Array{Float64,2} = begin
+        U_lower = -ones(n,k)
+        U_lower[end,:] .= 0.0
+        U_lower
+    end,
+    U_upper::Array{Float64,2} = ones(n,k),
+    polyhedra::Union{Vector, Nothing} = nothing,
     orthogonality_tolerance::Float64 = 0.0,
 )
+    if !(relaxation in ["SDP", "SOCP"])
+        error("""
+        Invalid input for relaxation method.
+        Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
+        """)
+    end
+    if !(branching_type in ["box", "angular", "polyhedral"])
+        error("""
+        Invalid input for branching type.
+        Branching type must be either "box" or "angular" or "polyhedral"; $branching_type supplied instead.
+        """)
+    end
     if !(
-        size(U_lower) == size(U_upper)
+        size(U_lower) == (n,k)
+        && size(U_upper) == (n,k)
+        && (
+            isnothing(polyhedra)
+            || size(polyhedra, 1) == k
+        )
     )
         error("""
         Dimension mismatch. 
         Input matrix U_lower must have size (n, k); 
-        Input matrix U_upper must have size (n, k).
+        Input matrix U_upper must have size (n, k);
+        If provided, input vector polyhedra must have size (k,).
         """)
     end
 
@@ -398,6 +473,11 @@ function relax_feasibility_frob_matrixcomp(
 
     # Lower bounds and upper bounds on U
     @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
+
+    # Polyhedral bounds on U, if supplied
+    if !isnothing(polyhedra)
+        @constraint(model, [j=1:k], U[:,j] in polyhedra[j])
+    end
 
     # McCormick inequalities at U_lower and U_upper here
     @constraint(
@@ -478,35 +558,54 @@ function relax_feasibility_frob_matrixcomp(
 end
 
 function relax_frob_matrixcomp(
+    n::Int,
+    k::Int,
     relaxation::String,
-    U_lower::Array{Float64,2},
-    U_upper::Array{Float64,2},
+    branching_type::String,
     A::Array{Float64,2},
     indices::Array{Float64,2},
     γ::Float64,
     λ::Float64,
     ;
+    U_lower::Array{Float64,2} = begin
+        U_lower = -ones(n,k)
+        U_lower[end,:] .= 0.0
+        U_lower
+    end,
+    U_upper::Array{Float64,2} = ones(n,k),
+    polyhedra::Union{Vector, Nothing} = nothing,
     orthogonality_tolerance::Float64 = 0.0,
     solver_output::Int = 0,
 )
     if !(relaxation in ["SDP", "SOCP"])
         error("""
         Invalid input for relaxation method.
-        Relaxation must be either "SDP" or "SOCP".
+        Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
+        """)
+    end
+    if !(branching_type in ["box", "angular", "polyhedral"])
+        error("""
+        Invalid input for branching type.
+        Branching type must be either "box" or "angular" or "polyhedral"; $branching_type supplied instead.
         """)
     end
     if !(
-        size(U_lower) == size(U_upper) 
-        && size(U_lower, 1) == size(U_upper, 1) == size(A, 1) == size(indices, 1) 
-        && size(A) == size(indices)
+        size(U_lower) == (n,k)
+        && size(U_upper) == (n,k)
+        && size(A, 1) == size(indices, 1) == n
+        && size(A, 2) == size(indices, 2)
+        && (
+            isnothing(polyhedra)
+            || size(polyhedra, 1) == k
+        )
     )
         error("""
         Dimension mismatch. 
         Input matrix U_lower must have size (n, k); 
         Input matrix U_upper must have size (n, k); 
         Input matrix A must have size (n, m);
-        Input matrix indices must have size (n, m).
-        """)
+        Input matrix indices must have size (n, m);
+        If provided, input vector polyhedra must have size (k,).""")
     end
 
     (n, k) = size(U_lower)
@@ -661,6 +760,11 @@ function relax_frob_matrixcomp(
     # Lower bounds and upper bounds on U
     @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
 
+    # Polyhedral bounds on U, if supplied
+    if !isnothing(polyhedra)
+        @constraint(model, [j=1:k], U[:,j] in polyhedra[j])
+    end
+        
     # McCormick inequalities at U_lower and U_upper here
     @constraint(
         model,
@@ -741,19 +845,11 @@ function relax_frob_matrixcomp(
 
     optimize!(model)
 
-    if JuMP.termination_status(model) == MOI.OPTIMAL
-        return Dict(
-            "feasible" => true,
-            "termination_status" => JuMP.termination_status(model),
-            "objective" => objective_value(model),
-            "Y" => value.(Y),
-            "U" => value.(U),
-            "t" => value.(t),
-            "X" => value.(X),
-            "Θ" => value.(Θ),
-        )
-    elseif JuMP.termination_status(model) == MOI.LOCALLY_SOLVED
-        return Dict(
+    if JuMP.termination_status(model) in [
+        MOI.OPTIMAL,
+        MOI.LOCALLY_SOLVED,
+    ]
+        results = Dict(
             "feasible" => true,
             "termination_status" => JuMP.termination_status(model),
             "objective" => objective_value(model),
@@ -769,13 +865,13 @@ function relax_frob_matrixcomp(
         MOI.LOCALLY_INFEASIBLE,
         MOI.INFEASIBLE_OR_UNBOUNDED,
     ]
-        return Dict(
+        results = Dict(
             "feasible" => false,
             "termination_status" => JuMP.termination_status(model),
         )
     elseif JuMP.termination_status(model) == MOI.SLOW_PROGRESS
         if has_values(model)
-            return Dict(
+            results = Dict(
                 "feasible" => true,
                 "termination_status" => JuMP.termination_status(model),
                 "objective" => objective_value(model),
@@ -786,7 +882,7 @@ function relax_frob_matrixcomp(
                 "Θ" => value.(Θ),
             )
         else
-            return Dict(
+            results = Dict(
                 "feasible" => false,
                 "termination_status" => JuMP.termination_status(model),
                 "model" => model,
@@ -797,6 +893,8 @@ function relax_frob_matrixcomp(
         unexpected termination status: $(JuMP.termination_status(model))
         """)
     end
+
+    return results
 end
 
 function alternating_minimization(
