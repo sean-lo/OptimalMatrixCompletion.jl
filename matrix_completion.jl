@@ -119,11 +119,15 @@ function branchandbound_frob_matrixcomp(
     )
 
     start_time = time()
+    solve_time_altmin = 0.0
 
     # TODO: better initial Us?
-    U_altmin, V_altmin = @suppress alternating_minimization(
+    altmin_results = @suppress alternating_minimization(
         A, k, indices, γ, λ,
     )
+    U_altmin = altmin_results["U"]
+    V_altmin = altmin_results["V"]
+    solve_time_altmin = altmin_results["solve_time"]
     # do a re-SVD on U * V in order to recover orthonormal U
     X_initial = U_altmin * V_altmin
     U_initial, S_initial, V_initial = svd(X_initial) # TODO: implement truncated SVD
@@ -418,6 +422,7 @@ function branchandbound_frob_matrixcomp(
         "start_time" => start_time,
         "end_time" => end_time,
         "time_taken" => time_taken,
+        "solve_time_altmin" => solve_time_altmin,
         "nodes_explored" => node_id,
         "nodes_total" => counter,
         "nodes_relax_infeasible" => nodes_relax_infeasible,
@@ -1031,6 +1036,8 @@ function alternating_minimization(
         return value.(W), objective_value(model)
     end
 
+    altmin_start_time = time()
+
     (n, m) = size(A)
     A_initial = zeros(n, m)
     for i in 1:n, j in 1:m
@@ -1047,19 +1054,26 @@ function alternating_minimization(
 
     while counter < max_iters
         counter += 1
-        U_new, _ = minimize_U(W_current)
-        W_new, objective_new = minimize_W(U_new)
+        global U_new, _ = minimize_U(W_current)
+        global W_new, objective_new = minimize_W(U_new)
         objective_diff = abs(objective_new - objective_current)
         # println(counter)
         # println(objective_diff)
         if objective_diff < ϵ # objectives don't oscillate!
-            return U_new, W_new
+            break
         end
         U_current = U_new
         W_current = W_new
         objective_current = objective_new
     end
-    return U_new, W_new
+
+    altmin_end_time = time()
+
+    return Dict(
+        "U" => U_new, 
+        "V" => W_new, 
+        "solve_time" => (altmin_end_time - altmin_start_time),
+    )
 end
 
 function objective_function(
