@@ -150,6 +150,7 @@ function branchandbound_frob_matrixcomp(
         "X" => X_initial,
     )
 
+    # (1) number of nodes explored so far
     node_id = 1
     if branching_type == "box"
         U_lower_initial = -ones(n, k)
@@ -172,9 +173,39 @@ function branchandbound_frob_matrixcomp(
     lower_bounds = Dict{Integer, Float64}()
     ancestry = []
 
+    # (2) number of nodes generated in total
     counter = 1
     last_updated_counter = 1    
     now_gap = 1e5
+
+    # (3) number of nodes with infeasible relaxation
+    nodes_relax_infeasible = 0 # always pruned
+    # (4) number of nodes with feasible relaxation,
+    # a.k.a. number of relaxations solved
+    nodes_relax_feasible = 0 
+    # (3) + (4) should yield (2)
+
+    # (5) number of nodes with feasible relaxation
+    # that have objective dominated by best upper bound so far
+    nodes_relax_feasible_pruned = 0 # always pruned
+    # (6) number of nodes with feasible relaxation
+    # that are also feasible for the master problem
+    nodes_master_feasible = 0 # always pruned
+    # (7) number of nodes with feasible relaxation
+    # that are also feasible for the master problem,
+    # and improve on best upper bound so far
+    nodes_master_feasible_improvement = 0 # always pruned
+    # (7) ⊂ (6)
+
+    # (8) number of nodes with feasible relaxation,
+    # that have objective NOT dominated by best upper bound so far,
+    # that are not feasible for the master problem,
+    # and are therefore split on
+    nodes_relax_feasible_split = 0 # not pruned
+
+    # (5) + (6) + (8) should yield (4)
+    # pruned nodes: (3) + (5) + (6)
+    # not pruned nodes: (8)
 
     while (
         now_gap > gap &&
@@ -211,6 +242,7 @@ function branchandbound_frob_matrixcomp(
                     U_upper = U_upper
                 )
             )
+                nodes_relax_infeasible += 1
                 split_flag = false
                 continue
             end
@@ -221,6 +253,7 @@ function branchandbound_frob_matrixcomp(
                     polyhedra = polyhedra
                 )
             )
+                nodes_relax_infeasible += 1
                 split_flag = false
                 continue
             end
@@ -233,6 +266,7 @@ function branchandbound_frob_matrixcomp(
                     polyhedra = polyhedra
                 )
             )
+                nodes_relax_infeasible += 1
                 split_flag = false
                 continue
             end
@@ -247,7 +281,8 @@ function branchandbound_frob_matrixcomp(
             relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper, polyhedra = polyhedra)
         end
         
-        if relax_result["feasible"] == false
+        if relax_result["feasible"] == false # should not happen, since this should be checked by relax_feasibility_frob_matrixcomp
+            nodes_relax_infeasible += 1
             split_flag = false
             continue
         elseif relax_result["termination_status"] in [
@@ -278,6 +313,7 @@ function branchandbound_frob_matrixcomp(
                 branching_type: $branching_type
                 """)
             end
+            nodes_relax_feasible += 1
             objective_relax = relax_result["objective"]
             lower_bounds[node_id] = objective_relax
             Y_relax = relax_result["Y"]
@@ -292,6 +328,7 @@ function branchandbound_frob_matrixcomp(
 
         # if solution for relax_result has higher objective than best found so far: prune the node
         if objective_relax ≥ solution["objective"]
+            nodes_relax_feasible_pruned += 1
             split_flag = false
         end
 
@@ -299,8 +336,10 @@ function branchandbound_frob_matrixcomp(
         # prune this node;
         # if it is the best found so far, update solution
         if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, t_relax, X_relax, Θ_relax)
+            nodes_master_feasible += 1
             # if best found so far, update solution
             if objective_relax < solution["objective"]
+                nodes_master_feasible_improvement += 1
                 solution["objective"] = objective_relax
                 upper = objective_relax
                 solution["Y"] = copy(Y_relax)
@@ -318,6 +357,7 @@ function branchandbound_frob_matrixcomp(
 
         # branch on variable
         # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
+        nodes_relax_feasible_split += 1
         if branching_type == "box"
             (diff, index) = findmax(U_upper - U_lower)
             mid = U_lower[index] + diff / 2
@@ -378,6 +418,14 @@ function branchandbound_frob_matrixcomp(
         "start_time" => start_time,
         "end_time" => end_time,
         "time_taken" => time_taken,
+        "nodes_explored" => node_id,
+        "nodes_total" => counter,
+        "nodes_relax_infeasible" => nodes_relax_infeasible,
+        "nodes_relax_feasible" => nodes_relax_feasible,
+        "nodes_relax_feasible_pruned" => nodes_relax_feasible_pruned,
+        "nodes_master_feasible" => nodes_master_feasible,
+        "nodes_master_feasible_improvement" => nodes_master_feasible_improvement,
+        "nodes_relax_feasible_split" => nodes_relax_feasible_split,
     )
 
     push!(
