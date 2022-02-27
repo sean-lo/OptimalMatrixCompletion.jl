@@ -233,7 +233,7 @@ function branchandbound_frob_matrixcomp(
                 polyhedra = φ_ranges_to_polyhedra(φ_lower, φ_upper, true)
             end
         else
-            now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
+            now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
             break
         end
 
@@ -351,7 +351,7 @@ function branchandbound_frob_matrixcomp(
                 solution["Y"] = copy(Y_relax)
                 solution["U"] = copy(U_relax)
                 solution["X"] = copy(X_relax)
-                now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
+                now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
                 last_updated_counter = counter
             end
             split_flag = false
@@ -394,13 +394,13 @@ function branchandbound_frob_matrixcomp(
             pop!(lower_bounds, anc_node_id)
             if minimum(values(lower_bounds)) > lower
                 lower = minimum(values(lower_bounds))
-                now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
+                now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
                 last_updated_counter = counter
             end
         end
 
         if node_id == 1
-            now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
+            now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
             last_updated_counter = counter
             if root_only
                 break
@@ -408,7 +408,7 @@ function branchandbound_frob_matrixcomp(
         end
 
         if ((counter ÷ update_step) > (last_updated_counter ÷ update_step))
-            now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
+            now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
             last_updated_counter = counter
         end
     end
