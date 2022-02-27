@@ -28,10 +28,10 @@ function test_relax_frob_matrixcomp(
         Relaxation must be either "SDP" or "SOCP".
         """)
     end
-    if !(branching_type in ["box", "angular", "polyhedral"])
+    if !(branching_type in ["box", "angular", "polyhedral", "polyhedral_lite"])
         error("""
         Invalid input for branching type.
-        Branching type must be either "box" or "angular" or "polyhedral".
+        Branching type must be either "box" or "angular" or "polyhedral" or "polyhedral_lite"; $branching_type supplied instead.
         """)
     end
     if n_indices < (n + m) * k
@@ -321,10 +321,10 @@ function test_branchandbound_frob_matrixcomp(
         Relaxation must be either "SDP" or "SOCP".
         """)
     end
-    if !(branching_type in ["box", "angular", "polyhedral"])
+    if !(branching_type in ["box", "angular", "polyhedral", "polyhedral_lite"])
         error("""
         Invalid input for branching type.
-        Branching type must be either "box" or "angular" or "polyhedral".
+        Branching type must be either "box" or "angular" or "polyhedral" or "polyhedral_lite"; $branching_type supplied instead.
         """)
     end
     if n_indices < (n + m) * k
@@ -378,7 +378,7 @@ function run_experiments(
     γ_ranges = [1.0],
     λ_ranges = [1.0],
     relaxation_ranges = ["SDP", "SOCP"],
-    branching_type_ranges = ["angular", "box", "polyhedral"],
+    branching_type_ranges = ["angular", "box", "polyhedral", "polyhedral_lite"],
     max_steps = 10000,
     time_limit = 3600,
 )
@@ -556,6 +556,9 @@ plot(angular_run_log[:,"runtime"], angular_run_log[:, "gap"], yaxis=:log)
 
 include("matrix_completion.jl")
 
+
+polyhedral_lite_SDP_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "polyhedral_lite", relaxation = "SDP", time_limit = 120, max_steps = 10000, root_only = false)
+polyhedral_SDP_result = test_branchandbound_frob_matrixcomp(1,4,5,10,1, branching_type = "polyhedral", relaxation = "SDP", time_limit = 120, max_steps = 10000, root_only = false)
 
 polyhedral_SDP_result = test_branchandbound_frob_matrixcomp(1,5,6,15,1, branching_type = "polyhedral", relaxation = "SDP", time_limit = 120, max_steps = 10000, root_only = false)
 polyhedral_SDP_result = test_branchandbound_frob_matrixcomp(1,6,7,21,1, branching_type = "polyhedral", relaxation = "SDP", time_limit = 240, max_steps = 10000, root_only = false)

@@ -22,7 +22,7 @@ function branchandbound_frob_matrixcomp(
     λ::Float64,
     ;
     relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
-    branching_type::String = "box", # type of branching to use; either "box" or "angular"
+    branching_type::String = "box", # type of branching to use; either "box" or "angular" or "polyhedral" or "polyhedral_lite"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     root_only::Bool = false, # if true, only solves relaxation at root node
     max_steps::Int = 1000000,
@@ -53,10 +53,10 @@ function branchandbound_frob_matrixcomp(
         Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
         """)
     end
-    if !(branching_type in ["box", "angular", "polyhedral"])
+    if !(branching_type in ["box", "angular", "polyhedral", "polyhedral_lite"])
         error("""
         Invalid input for branching type.
-        Branching type must be either "box" or "angular" or "polyhedral"; $branching_type supplied instead.
+        Branching type must be either "box" or "angular" or "polyhedral" or "polyhedral_lite"; $branching_type supplied instead.
         """)
     end
 
@@ -160,7 +160,7 @@ function branchandbound_frob_matrixcomp(
         φ_lower_initial = zeros(n-1, k)
         φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
         nodes = [(φ_lower_initial, φ_upper_initial, node_id)]
-    elseif branching_type == "polyhedral"
+    elseif branching_type in ["polyhedral", "polyhedral_lite"]
         φ_lower_initial = zeros(n-1, k)
         φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
         nodes = [(φ_lower_initial, φ_upper_initial, node_id)]
@@ -190,7 +190,11 @@ function branchandbound_frob_matrixcomp(
                 (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
             elseif branching_type == "polyhedral"
                 (φ_lower, φ_upper, node_id) = popfirst!(nodes)
-                polyhedra = φ_ranges_to_polyhedra(φ_lower, φ_upper)
+                polyhedra = φ_ranges_to_polyhedra(φ_lower, φ_upper, false)
+            elseif branching_type == "polyhedral_lite"   
+                (φ_lower, φ_upper, node_id) = popfirst!(nodes)
+                (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
+                polyhedra = φ_ranges_to_polyhedra(φ_lower, φ_upper, true)
             end
         else
             now_gap = add_update!(printlist, instance,node_id, counter, lower, upper, start_time)
@@ -220,6 +224,18 @@ function branchandbound_frob_matrixcomp(
                 split_flag = false
                 continue
             end
+        elseif branching_type == "polyhedral_lite"
+            if !(
+                @suppress relax_feasibility_frob_matrixcomp(
+                    n, k, relaxation, branching_type;
+                    U_lower = U_lower, 
+                    U_upper = U_upper,
+                    polyhedra = polyhedra
+                )
+            )
+                split_flag = false
+                continue
+            end
         end
 
         # solve SDP / SOCP relaxation of master problem
@@ -227,6 +243,8 @@ function branchandbound_frob_matrixcomp(
             relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper)
         elseif branching_type == "polyhedral"
             relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; polyhedra = polyhedra)
+        elseif branching_type == "polyhedral_lite"
+            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper, polyhedra = polyhedra)
         end
         
         if relax_result["feasible"] == false
@@ -311,7 +329,7 @@ function branchandbound_frob_matrixcomp(
             push!(nodes, (U_lower_new, U_upper, counter + 2))
             push!(ancestry, (node_id, [counter + 1, counter + 2]))
             counter += 2
-        elseif branching_type in ["angular", "polyhedral"]
+        elseif branching_type in ["angular", "polyhedral", "polyhedral_lite"]
             (diff, index) = findmax(φ_upper - φ_lower)
             mid = φ_lower[index] + diff / 2
             φ_lower_new = copy(φ_lower)
@@ -432,10 +450,10 @@ function relax_feasibility_frob_matrixcomp(
         Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
         """)
     end
-    if !(branching_type in ["box", "angular", "polyhedral"])
+    if !(branching_type in ["box", "angular", "polyhedral", "polyhedral_lite"])
         error("""
         Invalid input for branching type.
-        Branching type must be either "box" or "angular" or "polyhedral"; $branching_type supplied instead.
+        Branching type must be either "box" or "angular" or "polyhedral" or "polyhedral_lite"; $branching_type supplied instead.
         """)
     end
     if !(
@@ -476,7 +494,11 @@ function relax_feasibility_frob_matrixcomp(
 
     # Polyhedral bounds on U, if supplied
     if !isnothing(polyhedra)
-        @constraint(model, [j=1:k], U[:,j] in polyhedra[j])
+        for j in 1:k
+            if !isnothing(polyhedra[j])
+                @constraint(model, U[:,j] in polyhedra[j])
+            end
+        end
     end
 
     # McCormick inequalities at U_lower and U_upper here
@@ -583,10 +605,10 @@ function relax_frob_matrixcomp(
         Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
         """)
     end
-    if !(branching_type in ["box", "angular", "polyhedral"])
+    if !(branching_type in ["box", "angular", "polyhedral", "polyhedral_lite"])
         error("""
         Invalid input for branching type.
-        Branching type must be either "box" or "angular" or "polyhedral"; $branching_type supplied instead.
+        Branching type must be either "box" or "angular" or "polyhedral" or "polyhedral_lite"; $branching_type supplied instead.
         """)
     end
     if !(
@@ -762,7 +784,11 @@ function relax_frob_matrixcomp(
 
     # Polyhedral bounds on U, if supplied
     if !isnothing(polyhedra)
-        @constraint(model, [j=1:k], U[:,j] in polyhedra[j])
+        for j in 1:k
+            if !isnothing(polyhedra[j])
+                @constraint(model, U[:,j] in polyhedra[j])
+            end
+        end
     end
         
     # McCormick inequalities at U_lower and U_upper here
@@ -1186,6 +1212,7 @@ end
 function φ_ranges_to_polyhedra(
     φ_lower::Array{Float64,2}, 
     φ_upper::Array{Float64,2}, 
+    lite::Bool,
 )
     
     function angles_to_vector(
@@ -1224,15 +1251,78 @@ function φ_ranges_to_polyhedra(
         ]
     end
 
+    function angles_to_facet_lite(
+        ϕ1::Vector{Float64}, 
+        ϕ2::Vector{Float64},
+    )
+        inds = []
+        for (i1, i2) in zip(ϕ1, ϕ2)
+            if !isapprox(i1, 0.0, atol=1e-14)
+                push!(inds, 1)
+            elseif !isapprox(i2, pi, atol=1e-14)
+                push!(inds, 2)
+            else
+                error()
+            end
+        end
+        ϕref = [
+            (ind == 1) ? ϕ1[i] : ϕ2[i]
+            for (i, ind) in enumerate(inds)
+        ]
+        angles = [ϕref]
+        for (i, ind) in enumerate(inds)
+            ϕ = copy(ϕref)
+            ϕ[i] = (
+                (ind == 1) ? ϕ2[i] : ϕ1[i]
+            )
+            push!(angles, ϕ)
+        end
+        return [
+            angles_to_vector(collect(β))
+            for β in angles
+        ]
+    end
+
     function indexes_to_facet(
         α1::Vector{Int},
         α2::Vector{Int},
         gamma::Int,
+        lite::Bool,
     )
-        return angles_to_facet(
-            index_to_angles(α1, gamma), 
-            index_to_angles(α2, gamma),
-        )
+        if lite
+            return angles_to_facet_lite(
+                index_to_angles(α1, gamma), 
+                index_to_angles(α2, gamma),
+            )
+        else
+            return angles_to_facet(
+                index_to_angles(α1, gamma), 
+                index_to_angles(α2, gamma),
+            )
+        end
+    end
+
+    function angles_to_halfspace(        
+        ϕ1::Vector{Float64}, 
+        ϕ2::Vector{Float64},
+    )
+        # Returns the Polyhedra.HalfSpace defined by ϕ1, ϕ2
+        # which does not contain the origin
+        f_lite = angles_to_facet_lite(ϕ1, ϕ2)
+        n = size(f_lite[1], 1)
+        model = Model(Gurobi.Optimizer)
+        @variable(model, c[1:n])
+        @constraint(model, [i=2:n], Compat.dot(c, (f_lite[1] - f_lite[i])) == 0.0)
+        @constraint(model, sum(c) == 1)
+        @objective(model, Min, Compat.dot(c, f_lite[1]))
+        optimize!(model)
+        c = value.(c)
+        b = objective_value(model)
+        if b < 0
+            return HalfSpace(c, b)
+        elseif b > 0
+            return HalfSpace(-c, -b)
+        end
     end
 
     function facet_to_pol(f)
@@ -1244,6 +1334,16 @@ function φ_ranges_to_polyhedra(
             p = p ∩ HalfSpace(knot, 1)
         end
         return p
+    end
+
+    function angles_to_pol_lite(ϕ1, ϕ2)
+        if isapprox(maximum(ϕ2 - ϕ1), pi, atol = 1e-14)
+            return nothing
+        end
+        # TODO: explore more knots
+        knot = angles_to_vector((ϕ1 + ϕ2) / 2) 
+        p = @suppress angles_to_halfspace(ϕ1, ϕ2)
+        return p ∩ HalfSpace(knot, 1)
     end
     
     if !(
@@ -1259,14 +1359,24 @@ function φ_ranges_to_polyhedra(
     n = size(φ_lower, 1) + 1
     k = size(φ_lower, 2)
     
-    polyhedra = [
-        facet_to_pol(
-            angles_to_facet(
+    if lite
+        polyhedra = [
+            angles_to_pol_lite(
                 φ_lower[:,j],
                 φ_upper[:,j],
             )
-        )
-        for j in 1:k
-    ]
+            for j in 1:k
+        ]
+    else
+        polyhedra = [
+            facet_to_pol(
+                angles_to_facet(
+                    φ_lower[:,j],
+                    φ_upper[:,j],
+                )
+            )
+            for j in 1:k
+        ]
+    end
     return polyhedra
 end
