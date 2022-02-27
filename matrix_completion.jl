@@ -119,6 +119,7 @@ function branchandbound_frob_matrixcomp(
     )
 
     start_time = time()
+    solve_time_relaxation = 0.0
     solve_time_altmin = 0.0
 
     # TODO: better initial Us?
@@ -284,6 +285,7 @@ function branchandbound_frob_matrixcomp(
         elseif branching_type == "polyhedral_lite"
             relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper, polyhedra = polyhedra)
         end
+        solve_time_relaxation += relax_result["solve_time"]
         
         if relax_result["feasible"] == false # should not happen, since this should be checked by relax_feasibility_frob_matrixcomp
             nodes_relax_infeasible += 1
@@ -423,6 +425,7 @@ function branchandbound_frob_matrixcomp(
         "end_time" => end_time,
         "time_taken" => time_taken,
         "solve_time_altmin" => solve_time_altmin,
+        "solve_time_relaxation" => solve_time_relaxation,
         "nodes_explored" => node_id,
         "nodes_total" => counter,
         "nodes_relax_infeasible" => nodes_relax_infeasible,
@@ -923,49 +926,40 @@ function relax_frob_matrixcomp(
     )
 
     optimize!(model)
+    results = Dict(
+        "solve_time" => solve_time(model),
+        "termination_status" => JuMP.termination_status(model),
+    )
 
     if JuMP.termination_status(model) in [
         MOI.OPTIMAL,
         MOI.LOCALLY_SOLVED,
     ]
-        results = Dict(
-            "feasible" => true,
-            "termination_status" => JuMP.termination_status(model),
-            "objective" => objective_value(model),
-            "Y" => value.(Y),
-            "U" => value.(U),
-            "t" => value.(t),
-            "X" => value.(X),
-            "Θ" => value.(Θ),
-        )
+        results["feasible"] = true
+        results["objective"] = objective_value(model)
+        results["Y"] = value.(Y)
+        results["U"] = value.(U)
+        results["t"] = value.(t)
+        results["X"] = value.(X)
+        results["Θ"] = value.(Θ)
     elseif JuMP.termination_status(model) in [
         MOI.INFEASIBLE,
         MOI.DUAL_INFEASIBLE,
         MOI.LOCALLY_INFEASIBLE,
         MOI.INFEASIBLE_OR_UNBOUNDED,
     ]
-        results = Dict(
-            "feasible" => false,
-            "termination_status" => JuMP.termination_status(model),
-        )
+        results["feasible"] = false
     elseif JuMP.termination_status(model) == MOI.SLOW_PROGRESS
         if has_values(model)
-            results = Dict(
-                "feasible" => true,
-                "termination_status" => JuMP.termination_status(model),
-                "objective" => objective_value(model),
-                "Y" => value.(Y),
-                "U" => value.(U),
-                "t" => value.(t),
-                "X" => value.(X),
-                "Θ" => value.(Θ),
-            )
+            results["feasible"] = true
+            results["objective"] = objective_value(model)
+            results["Y"] = value.(Y)
+            results["U"] = value.(U)
+            results["t"] = value.(t)
+            results["X"] = value.(X)
+            results["Θ"] = value.(Θ)
         else
-            results = Dict(
-                "feasible" => false,
-                "termination_status" => JuMP.termination_status(model),
-                "model" => model,
-            )
+            results["feasible"] = false
         end
     else
         error("""
