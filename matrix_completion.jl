@@ -6,6 +6,7 @@ using Printf
 using Dates
 using Suppressor
 using DataFrames
+using OrderedCollections
 
 using JuMP
 using MathOptInterface
@@ -119,8 +120,11 @@ function branchandbound_frob_matrixcomp(
     )
 
     start_time = time()
+    solve_time_relaxation_feasibility = 0.0
     solve_time_relaxation = 0.0
     solve_time_altmin = 0.0
+    solve_time_U_ranges = 0.0
+    solve_time_polyhedra = 0.0
 
     # TODO: better initial Us?
     altmin_results = @suppress alternating_minimization(
@@ -188,7 +192,7 @@ function branchandbound_frob_matrixcomp(
     # (4) number of nodes with feasible relaxation,
     # a.k.a. number of relaxations solved
     nodes_relax_feasible = 0 
-    # (3) + (4) should yield (2)
+    # (3) + (4) should yield (1)
 
     # (5) number of nodes with feasible relaxation
     # that have objective dominated by best upper bound so far
@@ -223,14 +227,24 @@ function branchandbound_frob_matrixcomp(
             elseif branching_type == "angular"
                 (φ_lower, φ_upper, node_id) = popfirst!(nodes)
                 # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
-                (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
+                U_ranges_results = φ_ranges_to_U_ranges(φ_lower, φ_upper)
+                U_lower = U_ranges_results["U_lower"]
+                U_upper = U_ranges_results["U_upper"]
+                solve_time_U_ranges += U_ranges_results["time_taken"]
             elseif branching_type == "polyhedral"
                 (φ_lower, φ_upper, node_id) = popfirst!(nodes)
-                polyhedra = φ_ranges_to_polyhedra(φ_lower, φ_upper, false)
+                polyhedra_results = φ_ranges_to_polyhedra(φ_lower, φ_upper, false)
+                polyhedra = polyhedra_results["polyhedra"]
+                solve_time_polyhedra += polyhedra_results["time_taken"]
             elseif branching_type == "polyhedral_lite"   
                 (φ_lower, φ_upper, node_id) = popfirst!(nodes)
-                (U_lower, U_upper) = φ_ranges_to_U_ranges(φ_lower, φ_upper)
-                polyhedra = φ_ranges_to_polyhedra(φ_lower, φ_upper, true)
+                U_ranges_results = φ_ranges_to_U_ranges(φ_lower, φ_upper)
+                U_lower = U_ranges_results["U_lower"]
+                U_upper = U_ranges_results["U_upper"]
+                solve_time_U_ranges += U_ranges_results["time_taken"]
+                polyhedra_results = φ_ranges_to_polyhedra(φ_lower, φ_upper, false)
+                polyhedra = polyhedra_results["polyhedra"]
+                solve_time_polyhedra += polyhedra_results["time_taken"]
             end
         else
             now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
@@ -240,42 +254,31 @@ function branchandbound_frob_matrixcomp(
         split_flag = true
 
         if branching_type in ["box", "angular"]
-            if !(
-                @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, relaxation, branching_type;
-                    U_lower = U_lower, 
-                    U_upper = U_upper
-                )
+            relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
+                n, k, relaxation, branching_type;
+                U_lower = U_lower, 
+                U_upper = U_upper
             )
-                nodes_relax_infeasible += 1
-                split_flag = false
-                continue
-            end
         elseif branching_type == "polyhedral"
-            if !(
-                @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, relaxation, branching_type;
-                    polyhedra = polyhedra
-                )
+            relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
+                n, k, relaxation, branching_type;
+                polyhedra = polyhedra
             )
-                nodes_relax_infeasible += 1
-                split_flag = false
-                continue
-            end
         elseif branching_type == "polyhedral_lite"
-            if !(
-                @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, relaxation, branching_type;
-                    U_lower = U_lower, 
-                    U_upper = U_upper,
-                    polyhedra = polyhedra
-                )
+            relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
+                n, k, relaxation, branching_type;
+                U_lower = U_lower, 
+                U_upper = U_upper,
+                polyhedra = polyhedra
             )
-                nodes_relax_infeasible += 1
-                split_flag = false
-                continue
-            end
         end
+        solve_time_relaxation_feasibility += relax_feasibility_result["time_taken"]
+        if !relax_feasibility_result["feasible"]
+            nodes_relax_infeasible += 1
+            split_flag = false
+            continue
+        end
+
 
         # solve SDP / SOCP relaxation of master problem
         if branching_type in ["box", "angular"]
@@ -297,28 +300,28 @@ function branchandbound_frob_matrixcomp(
             MOI.SLOW_PROGRESS # TODO: investigate this
         ]
             ## TODO: comment these sections on/off to debug MOI.LOCALLY_SOLVED and MOI.SLOW_PROGRESS
-            if relax_result["termination_status"] == MOI.SLOW_PROGRESS
-                error("""
-                Unexpected termination status code: MOI.SLOW_PROGRESS;
-                k: $k
-                m: $m
-                n: $n
-                num_indices: $(convert(Int, round(sum(indices))))
-                relaxation: $relaxation
-                branching_type: $branching_type
-                """)
-            end
-            if relax_result["termination_status"] == MOI.LOCALLY_SOLVED
-                error("""
-                Unexpected termination status code: MOI.LOCALLY_SOLVED;
-                k: $k
-                m: $m
-                n: $n
-                num_indices: $(convert(Int, round(sum(indices))))
-                relaxation: $relaxation
-                branching_type: $branching_type
-                """)
-            end
+            # if relax_result["termination_status"] == MOI.SLOW_PROGRESS
+            #     error("""
+            #     Unexpected termination status code: MOI.SLOW_PROGRESS;
+            #     k: $k
+            #     m: $m
+            #     n: $n
+            #     num_indices: $(convert(Int, round(sum(indices))))
+            #     relaxation: $relaxation
+            #     branching_type: $branching_type
+            #     """)
+            # end
+            # if relax_result["termination_status"] == MOI.LOCALLY_SOLVED
+            #     error("""
+            #     Unexpected termination status code: MOI.LOCALLY_SOLVED;
+            #     k: $k
+            #     m: $m
+            #     n: $n
+            #     num_indices: $(convert(Int, round(sum(indices))))
+            #     relaxation: $relaxation
+            #     branching_type: $branching_type
+            #     """)
+            # end
             nodes_relax_feasible += 1
             objective_relax = relax_result["objective"]
             lower_bounds[node_id] = objective_relax
@@ -419,13 +422,16 @@ function branchandbound_frob_matrixcomp(
     solution["MSE_in"] = compute_MSE(solution["X"], A, indices, kind = "in")
     solution["MSE_out"] = compute_MSE(solution["X"], A, indices, kind = "out") 
 
-    instance["run_details"] = Dict(
+    instance["run_details"] = OrderedDict(
         "log_time" => log_time,
         "start_time" => start_time,
         "end_time" => end_time,
         "time_taken" => time_taken,
         "solve_time_altmin" => solve_time_altmin,
+        "solve_time_relaxation_feasibility" => solve_time_relaxation_feasibility,
         "solve_time_relaxation" => solve_time_relaxation,
+        "solve_time_U_ranges" => solve_time_U_ranges,
+        "solve_time_polyhedra" => solve_time_polyhedra,
         "nodes_explored" => node_id,
         "nodes_total" => counter,
         "nodes_relax_infeasible" => nodes_relax_infeasible,
@@ -435,6 +441,29 @@ function branchandbound_frob_matrixcomp(
         "nodes_master_feasible_improvement" => nodes_master_feasible_improvement,
         "nodes_relax_feasible_split" => nodes_relax_feasible_split,
     )
+    push!(
+        printlist, 
+        "\n\nRun details:\n"
+    )
+    for (k, v) in instance["run_details"]
+        if startswith(k, "nodes")
+            note = Printf.@sprintf(
+                "%33s: %10d\n",
+                k, v,
+            )
+        elseif startswith(k, "time") || startswith(k, "solve_time")
+            note = Printf.@sprintf(
+                "%33s: %10.3f\n",
+                k, v,
+            )
+        else
+            note = Printf.@sprintf(
+                "%33s: %s\n",
+                k, v,
+            )
+        end
+        push!(printlist, note)
+    end
 
     push!(
         printlist,
@@ -527,6 +556,8 @@ function relax_feasibility_frob_matrixcomp(
         If provided, input vector polyhedra must have size (k,).
         """)
     end
+
+    start_time = time()
 
     (n, k) = size(U_lower)
 
@@ -632,7 +663,12 @@ function relax_feasibility_frob_matrixcomp(
 
     optimize!(model)
 
-    return (JuMP.termination_status(model) == MOI.OPTIMAL)
+    end_time = time()
+    
+    return Dict(
+        "feasible" => (JuMP.termination_status(model) == MOI.OPTIMAL),
+        "time_taken" => end_time - start_time,
+    )
 end
 
 function relax_frob_matrixcomp(
@@ -1129,7 +1165,7 @@ end
 function φ_ranges_to_U_ranges(
     φ_lower::Array{Float64,2},
     φ_upper::Array{Float64,2},
-)
+) # TODO: let 2nd column depend on 1st column, 3rd column depend on 1st and 2nd, etc.
 
     function φ_to_cos(
         φ_L::Float64,
@@ -1182,6 +1218,8 @@ function φ_ranges_to_U_ranges(
         """)
     end
 
+    start_time = time()
+
     n = size(φ_lower, 1) + 1
     k = size(φ_lower, 2)
     
@@ -1221,7 +1259,13 @@ function φ_ranges_to_U_ranges(
         end
     end
 
-    return (U_lower, U_upper)
+    end_time = time()
+
+    return Dict(
+        "U_upper" => U_upper,
+        "U_lower" => U_lower,
+        "time_taken" => end_time - start_time,
+    )
 end
 
 function product_ranges(
@@ -1412,6 +1456,8 @@ function φ_ranges_to_polyhedra(
         """)
     end
 
+    start_time = time()
+
     n = size(φ_lower, 1) + 1
     k = size(φ_lower, 2)
     
@@ -1434,5 +1480,11 @@ function φ_ranges_to_polyhedra(
             for j in 1:k
         ]
     end
-    return polyhedra
+
+    end_time = time()
+
+    return Dict(
+        "polyhedra" => polyhedra,
+        "time_taken" => end_time - start_time,
+    )
 end
