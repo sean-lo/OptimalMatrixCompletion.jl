@@ -307,7 +307,7 @@ function test_branchandbound_frob_matrixcomp(
     seed::Int,
     ;
     γ::Float64 = 1.0,
-    λ::Float64 = 1.0,
+    λ::Float64 = 0.0,
     relaxation::String = "SDP",
     branching_type::String = "angular",
     root_only::Bool = false,
@@ -376,7 +376,7 @@ function run_experiments(
     k, m, n, n_indices, seeds,
     ;
     γ_ranges = [1.0],
-    λ_ranges = [1.0],
+    λ_ranges = [0.0],
     relaxation_ranges = ["SDP", "SOCP"],
     branching_type_ranges = ["angular", "box", "polyhedral", "polyhedral_lite"],
     max_steps = 10000,
@@ -480,7 +480,7 @@ function test_angular_box_branchandbound_frob_matrixcomp(
     k, m, n, n_indices, seeds,
     ;
     γ::Float64 = 1.0,
-    λ::Float64 = 1.0,
+    λ::Float64 = 0.0,
     relaxation::String = "SDP",
     max_steps::Int = 10000,
     time_limit::Int = 3600,
