@@ -7,6 +7,7 @@ using Dates
 using Suppressor
 using DataFrames
 using OrderedCollections
+using Parameters
 
 using JuMP
 using MathOptInterface
@@ -14,6 +15,15 @@ using Gurobi
 using Mosek
 using MosekTools
 using Polyhedra
+
+@with_kw mutable struct BBNode
+    U_lower::Union{Matrix{Float64}, Missing} = missing
+    U_upper::Union{Matrix{Float64}, Missing} = missing
+    φ_lower::Union{Matrix{Float64}, Missing} = missing
+    φ_upper::Union{Matrix{Float64}, Missing} = missing
+    LB::Union{Float64, Missing} = missing
+    node_id::Int
+end
 
 function branchandbound_frob_matrixcomp(
     k::Int,
@@ -23,7 +33,8 @@ function branchandbound_frob_matrixcomp(
     λ::Float64,
     ;
     relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
-    branching_type::String = "box", # type of branching to use; either "box" or "angular" or "polyhedral" or "polyhedral_lite"
+    branching_region::String = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
+    branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "gradient"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     root_only::Bool = false, # if true, only solves relaxation at root node
     max_steps::Int = 1000000,
@@ -54,10 +65,16 @@ function branchandbound_frob_matrixcomp(
         Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
         """)
     end
-    if !(branching_type in ["box", "angular", "polyhedral", "polyhedral_lite"])
+    if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
+        error("""
+        Invalid input for branching region.
+        Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
+        """)
+    end
+    if !(branching_type in ["lexicographic", "gradient"])
         error("""
         Invalid input for branching type.
-        Branching type must be either "box" or "angular" or "polyhedral" or "polyhedral_lite"; $branching_type supplied instead.
+        Branching type must be either "lexicographic" or "gradient"; $branching_type supplied instead.
         """)
     end
 
@@ -82,6 +99,7 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("γ:                 %10g\n", γ),
         Printf.@sprintf("λ:                 %10g\n", λ),
         Printf.@sprintf("Relaxation:        %10s\n", relaxation),
+        Printf.@sprintf("Branching region:  %10s\n", branching_region),
         Printf.@sprintf("Branching type:    %10s\n", branching_type),
         Printf.@sprintf("Optimality gap:    %10g\n", gap),
         Printf.@sprintf("Maximum nodes:     %10d\n", max_steps),
@@ -105,7 +123,7 @@ function branchandbound_frob_matrixcomp(
         "γ" => γ,
         "λ" => λ,
         "relaxation" => relaxation,
-        "branching_type" => branching_type,
+        "branching_region" => branching_region,
         "optimality_gap" => gap,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
@@ -161,23 +179,39 @@ function branchandbound_frob_matrixcomp(
 
     # (1) number of nodes explored so far
     node_id = 1
-    if branching_type == "box"
+    nodes = []
+    upper = objective_initial
+    lower = -Inf
+    if branching_region == "box"
         U_lower_initial = -ones(n, k)
         U_lower_initial[n,:] .= 0.0
         U_upper_initial = ones(n, k)
-        nodes = [(U_lower_initial, U_upper_initial, node_id)]
-    elseif branching_type == "angular"
+        initial_node = BBNode(
+            U_lower = U_lower_initial, 
+            U_upper = U_upper_initial, 
+            node_id = node_id,
+            LB = lower,
+        )
+    elseif branching_region == "angular"
         φ_lower_initial = zeros(n-1, k)
         φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
-        nodes = [(φ_lower_initial, φ_upper_initial, node_id)]
-    elseif branching_type in ["polyhedral", "polyhedral_lite"]
+        initial_node = BBNode(
+            φ_lower = φ_lower_initial, 
+            φ_upper = φ_upper_initial, 
+            node_id = node_id,
+            LB = lower,
+        )
+    elseif branching_region in ["polyhedral", "hybrid"]
         φ_lower_initial = zeros(n-1, k)
         φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
-        nodes = [(φ_lower_initial, φ_upper_initial, node_id)]
+        initial_node = BBNode(
+            φ_lower = φ_lower_initial, 
+            φ_upper = φ_upper_initial, 
+            node_id = node_id,
+            LB = lower,
+        )
     end
-
-    upper = objective_initial
-    lower = -Inf
+    push!(nodes, initial_node)
 
     lower_bounds = Dict{Integer, Float64}()
     ancestry = []
@@ -222,22 +256,34 @@ function branchandbound_frob_matrixcomp(
         time() - start_time ≤ time_limit
     )
         if length(nodes) != 0
-            if branching_type == "box"
-                (U_lower, U_upper, node_id) = popfirst!(nodes)
-            elseif branching_type == "angular"
-                (φ_lower, φ_upper, node_id) = popfirst!(nodes)
+            if branching_region == "box"
+                current_node = popfirst!(nodes)
+                U_lower = current_node.U_lower
+                U_upper = current_node.U_upper
+                node_id = current_node.node_id
+            elseif branching_region == "angular"
+                current_node = popfirst!(nodes)
+                φ_lower = current_node.φ_lower
+                φ_upper = current_node.φ_upper
+                node_id = current_node.node_id
                 # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
                 U_ranges_results = φ_ranges_to_U_ranges(φ_lower, φ_upper)
                 U_lower = U_ranges_results["U_lower"]
                 U_upper = U_ranges_results["U_upper"]
                 solve_time_U_ranges += U_ranges_results["time_taken"]
-            elseif branching_type == "polyhedral"
-                (φ_lower, φ_upper, node_id) = popfirst!(nodes)
+            elseif branching_region == "polyhedral"
+                current_node = popfirst!(nodes)
+                φ_lower = current_node.φ_lower
+                φ_upper = current_node.φ_upper
+                node_id = current_node.node_id
                 polyhedra_results = φ_ranges_to_polyhedra(φ_lower, φ_upper, false)
                 polyhedra = polyhedra_results["polyhedra"]
                 solve_time_polyhedra += polyhedra_results["time_taken"]
-            elseif branching_type == "polyhedral_lite"   
-                (φ_lower, φ_upper, node_id) = popfirst!(nodes)
+            elseif branching_region == "hybrid"   
+                current_node = popfirst!(nodes)
+                φ_lower = current_node.φ_lower
+                φ_upper = current_node.φ_upper
+                node_id = current_node.node_id
                 U_ranges_results = φ_ranges_to_U_ranges(φ_lower, φ_upper)
                 U_lower = U_ranges_results["U_lower"]
                 U_upper = U_ranges_results["U_upper"]
@@ -253,20 +299,20 @@ function branchandbound_frob_matrixcomp(
 
         split_flag = true
 
-        if branching_type in ["box", "angular"]
+        if branching_region in ["box", "angular"]
             relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                n, k, relaxation, branching_type;
+                n, k, relaxation, branching_region;
                 U_lower = U_lower, 
                 U_upper = U_upper
             )
-        elseif branching_type == "polyhedral"
+        elseif branching_region == "polyhedral"
             relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                n, k, relaxation, branching_type;
+                n, k, relaxation, branching_region;
                 polyhedra = polyhedra
             )
-        elseif branching_type == "polyhedral_lite"
+        elseif branching_region == "hybrid"
             relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                n, k, relaxation, branching_type;
+                n, k, relaxation, branching_region;
                 U_lower = U_lower, 
                 U_upper = U_upper,
                 polyhedra = polyhedra
@@ -281,12 +327,12 @@ function branchandbound_frob_matrixcomp(
 
 
         # solve SDP / SOCP relaxation of master problem
-        if branching_type in ["box", "angular"]
-            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper)
-        elseif branching_type == "polyhedral"
-            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; polyhedra = polyhedra)
-        elseif branching_type == "polyhedral_lite"
-            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_type, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper, polyhedra = polyhedra)
+        if branching_region in ["box", "angular"]
+            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_region, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper)
+        elseif branching_region == "polyhedral"
+            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_region, A, indices, γ, λ; polyhedra = polyhedra)
+        elseif branching_region == "hybrid"
+            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_region, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper, polyhedra = polyhedra)
         end
         solve_time_relaxation += relax_result["solve_time"]
         
@@ -308,7 +354,7 @@ function branchandbound_frob_matrixcomp(
             #     n: $n
             #     num_indices: $(convert(Int, round(sum(indices))))
             #     relaxation: $relaxation
-            #     branching_type: $branching_type
+            #     branching_region: $branching_region
             #     """)
             # end
             # if relax_result["termination_status"] == MOI.LOCALLY_SOLVED
@@ -319,7 +365,7 @@ function branchandbound_frob_matrixcomp(
             #     n: $n
             #     num_indices: $(convert(Int, round(sum(indices))))
             #     relaxation: $relaxation
-            #     branching_type: $branching_type
+            #     branching_region: $branching_region
             #     """)
             # end
             nodes_relax_feasible += 1
@@ -518,7 +564,7 @@ function relax_feasibility_frob_matrixcomp(
     n::Int,
     k::Int,
     relaxation::String,
-    branching_type::String,
+    branching_region::String,
     ;
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
@@ -535,10 +581,10 @@ function relax_feasibility_frob_matrixcomp(
         Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
         """)
     end
-    if !(branching_type in ["box", "angular", "polyhedral", "polyhedral_lite"])
+    if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
         error("""
-        Invalid input for branching type.
-        Branching type must be either "box" or "angular" or "polyhedral" or "polyhedral_lite"; $branching_type supplied instead.
+        Invalid input for branching region.
+        Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
         """)
     end
     if !(
@@ -675,7 +721,7 @@ function relax_frob_matrixcomp(
     n::Int,
     k::Int,
     relaxation::String,
-    branching_type::String,
+    branching_region::String,
     A::Array{Float64,2},
     indices::Array{Float64,2},
     γ::Float64,
@@ -697,10 +743,10 @@ function relax_frob_matrixcomp(
         Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
         """)
     end
-    if !(branching_type in ["box", "angular", "polyhedral", "polyhedral_lite"])
+    if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
         error("""
-        Invalid input for branching type.
-        Branching type must be either "box" or "angular" or "polyhedral" or "polyhedral_lite"; $branching_type supplied instead.
+        Invalid input for branching region.
+        Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
         """)
     end
     if !(
