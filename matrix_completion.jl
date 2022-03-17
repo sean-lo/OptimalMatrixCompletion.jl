@@ -413,29 +413,68 @@ function branchandbound_frob_matrixcomp(
         # branch on variable
         # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
         nodes_relax_feasible_split += 1
-        if branching_type == "box"
-            (diff, index) = findmax(U_upper - U_lower)
-            mid = U_lower[index] + diff / 2
-            U_lower_new = copy(U_lower)
-            U_lower_new[index] = mid
-            U_upper_new = copy(U_upper)
-            U_upper_new[index] = mid
-            push!(nodes, (U_lower, U_upper_new, counter + 1))
-            push!(nodes, (U_lower_new, U_upper, counter + 2))
-            push!(ancestry, (node_id, [counter + 1, counter + 2]))
-            counter += 2
-        elseif branching_type in ["angular", "polyhedral", "polyhedral_lite"]
-            (diff, index) = findmax(φ_upper - φ_lower)
-            mid = φ_lower[index] + diff / 2
-            φ_lower_new = copy(φ_lower)
-            φ_lower_new[index] = mid
-            φ_upper_new = copy(φ_upper)
-            φ_upper_new[index] = mid
-            push!(nodes, (φ_lower, φ_upper_new, counter + 1))
-            push!(nodes, (φ_lower_new, φ_upper, counter + 2))
-            push!(ancestry, (node_id, [counter + 1, counter + 2]))
-            counter += 2
+        if branching_region == "box"
+            if branching_type == "lexicographic"
+                (diff, ind) = findmax(U_upper - U_lower)
+            elseif branching_type == "gradient"
+                α = - γ * inv(relax_result["Y"]) * relax_result["X"]
+                (_, ind) = findmax(abs.(α))
+                diff = U_upper[ind] - U_lower[ind]
+            end
+            mid = U_lower[ind] + diff / 2
+            U_lower_left = U_lower
+            U_upper_left = copy(U_upper)
+            U_upper_left[ind] = mid
+            U_lower_right = copy(U_lower)
+            U_lower_right[ind] = mid
+            U_upper_right = U_upper
+            left_child_node = BBNode(
+                U_lower = U_lower_left,
+                U_upper = U_upper_left,
+                node_id = counter + 1,
+                # initialize a node's LB with the objective of relaxation of parent
+                LB = objective_relax, 
+            )
+            right_child_node = BBNode(
+                U_lower = U_lower_right,
+                U_upper = U_upper_right,
+                node_id = counter + 1,
+                # initialize a node's LB with the objective of relaxation of parent
+                LB = objective_relax,
+            )
+        elseif branching_region in ["angular", "polyhedral", "hybrid"]
+            if branching_type == "lexicographic"
+                (diff, ind) = findmax(φ_upper - φ_lower)
+            elseif branching_type == "gradient"
+                error("""
+                Branching type "gradient" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
+                """)
+            end
+            mid = φ_lower[ind] + diff / 2
+            φ_lower_left = φ_lower
+            φ_upper_left = copy(φ_upper)
+            φ_upper_left[ind] = mid
+            φ_lower_right = copy(φ_lower)
+            φ_lower_right[ind] = mid
+            φ_upper_right = φ_upper
+            left_child_node = BBNode(
+                φ_lower = φ_lower_left,
+                φ_upper = φ_upper_left,
+                node_id = counter + 1,
+                # initialize a node's LB with the objective of relaxation of parent
+                LB = objective_relax,
+            )
+            right_child_node = BBNode(
+                φ_lower = φ_lower_right,
+                φ_upper = φ_upper_right,
+                node_id = counter + 1,
+                # initialize a node's LB with the objective of relaxation of parent
+                LB = objective_relax,
+            )
         end
+        push!(nodes, left_child_node, right_child_node)
+        push!(ancestry, (node_id, [counter + 1, counter + 2]))
+        counter += 2
 
         (anc_node_id, anc_children_node_ids) = ancestry[1]
         if all(haskey(lower_bounds, id) for id in anc_children_node_ids)
