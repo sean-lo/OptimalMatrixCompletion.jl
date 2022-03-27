@@ -221,6 +221,9 @@ function branchandbound_frob_matrixcomp(
     last_updated_counter = 1    
     now_gap = 1e5
 
+    # number of nodes whose parent has 
+    # relaxation dominated by best solution found so far
+    nodes_dominated = 0 # always pruned
     # (3) number of nodes with infeasible relaxation
     nodes_relax_infeasible = 0 # always pruned
     # (4) number of nodes with feasible relaxation,
@@ -298,6 +301,12 @@ function branchandbound_frob_matrixcomp(
         end
 
         split_flag = true
+
+        if current_node.LB > solution["objective"]
+            split_flag = false
+            nodes_dominated += 1
+            continue
+        end
 
         if branching_region in ["box", "angular"]
             relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
@@ -519,6 +528,7 @@ function branchandbound_frob_matrixcomp(
         "solve_time_polyhedra" => solve_time_polyhedra,
         "nodes_explored" => node_id,
         "nodes_total" => counter,
+        "nodes_dominated" => nodes_dominated,
         "nodes_relax_infeasible" => nodes_relax_infeasible,
         "nodes_relax_feasible" => nodes_relax_feasible,
         "nodes_relax_feasible_pruned" => nodes_relax_feasible_pruned,
