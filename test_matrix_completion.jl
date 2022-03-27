@@ -17,7 +17,7 @@ function test_relax_frob_matrixcomp(
     U_upper::Array{Float64,2},
     ;
     γ::Float64 = 1.0,
-    λ::Float64 = 1.0,
+    λ::Float64 = 0.0,
     relaxation::String = "SDP",
     branching_region::String = "angular",
     solver_output::Int = 1,
