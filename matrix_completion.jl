@@ -261,25 +261,26 @@ function branchandbound_frob_matrixcomp(
         if length(nodes) != 0
             if branching_region == "box"
                 current_node = popfirst!(nodes)
-                U_lower = current_node.U_lower
-                U_upper = current_node.U_upper
                 node_id = current_node.node_id
             elseif branching_region == "angular"
                 current_node = popfirst!(nodes)
-                φ_lower = current_node.φ_lower
-                φ_upper = current_node.φ_upper
                 node_id = current_node.node_id
                 # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
-                U_ranges_results = φ_ranges_to_U_ranges(φ_lower, φ_upper)
-                U_lower = U_ranges_results["U_lower"]
-                U_upper = U_ranges_results["U_upper"]
+                U_ranges_results = φ_ranges_to_U_ranges(
+                    current_node.φ_lower, 
+                    current_node.φ_upper,
+                )
+                current_node.U_lower = U_ranges_results["U_lower"]
+                current_node.U_upper = U_ranges_results["U_upper"]
                 solve_time_U_ranges += U_ranges_results["time_taken"]
             elseif branching_region == "polyhedral"
                 current_node = popfirst!(nodes)
-                φ_lower = current_node.φ_lower
-                φ_upper = current_node.φ_upper
                 node_id = current_node.node_id
-                polyhedra_results = φ_ranges_to_polyhedra(φ_lower, φ_upper, false)
+                polyhedra_results = φ_ranges_to_polyhedra(
+                    current_node.φ_lower, 
+                    current_node.φ_upper, 
+                    false,
+                )
                 polyhedra = polyhedra_results["polyhedra"]
                 solve_time_polyhedra += polyhedra_results["time_taken"]
             elseif branching_region == "hybrid"   
@@ -287,16 +288,26 @@ function branchandbound_frob_matrixcomp(
                 φ_lower = current_node.φ_lower
                 φ_upper = current_node.φ_upper
                 node_id = current_node.node_id
-                U_ranges_results = φ_ranges_to_U_ranges(φ_lower, φ_upper)
-                U_lower = U_ranges_results["U_lower"]
-                U_upper = U_ranges_results["U_upper"]
+                U_ranges_results = φ_ranges_to_U_ranges(
+                    current_node.φ_lower, 
+                    current_node.φ_upper,
+                )
+                current_node.U_lower = U_ranges_results["U_lower"]
+                current_node.U_upper = U_ranges_results["U_upper"]
                 solve_time_U_ranges += U_ranges_results["time_taken"]
-                polyhedra_results = φ_ranges_to_polyhedra(φ_lower, φ_upper, false)
+                polyhedra_results = φ_ranges_to_polyhedra(
+                    current_node.φ_lower, 
+                    current_node.φ_upper, 
+                    false,
+                )
                 polyhedra = polyhedra_results["polyhedra"]
                 solve_time_polyhedra += polyhedra_results["time_taken"]
             end
         else
-            now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
+            now_gap = add_update!(
+                printlist, instance, node_id, counter, 
+                lower, upper, start_time,
+            )
             break
         end
 
@@ -311,20 +322,20 @@ function branchandbound_frob_matrixcomp(
         if branching_region in ["box", "angular"]
             relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
                 n, k, relaxation, branching_region;
-                U_lower = U_lower, 
-                U_upper = U_upper
+                U_lower = current_node.U_lower, 
+                U_upper = current_node.U_upper,
             )
         elseif branching_region == "polyhedral"
             relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
                 n, k, relaxation, branching_region;
-                polyhedra = polyhedra
+                polyhedra = polyhedra,
             )
         elseif branching_region == "hybrid"
             relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
                 n, k, relaxation, branching_region;
-                U_lower = U_lower, 
-                U_upper = U_upper,
-                polyhedra = polyhedra
+                U_lower = current_node.U_lower, 
+                U_upper = current_node.U_upper,
+                polyhedra = polyhedra,
             )
         end
         solve_time_relaxation_feasibility += relax_feasibility_result["time_taken"]
@@ -337,11 +348,21 @@ function branchandbound_frob_matrixcomp(
 
         # solve SDP / SOCP relaxation of master problem
         if branching_region in ["box", "angular"]
-            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_region, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper)
+            relax_result = @suppress relax_frob_matrixcomp(
+                n, k, relaxation, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
+                U_upper = current_node.U_upper,
+            )
         elseif branching_region == "polyhedral"
-            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_region, A, indices, γ, λ; polyhedra = polyhedra)
+            relax_result = @suppress relax_frob_matrixcomp(
+                n, k, relaxation, branching_region, A, indices, γ, λ; polyhedra = polyhedra,
+            )
         elseif branching_region == "hybrid"
-            relax_result = @suppress relax_frob_matrixcomp(n, k, relaxation, branching_region, A, indices, γ, λ; U_lower = U_lower, U_upper = U_upper, polyhedra = polyhedra)
+            relax_result = @suppress relax_frob_matrixcomp(
+                n, k, relaxation, branching_region, A, indices, γ, λ; 
+                U_lower = current_node.U_lower, 
+                U_upper = current_node.U_upper, 
+                polyhedra = polyhedra,
+            )
         end
         solve_time_relaxation += relax_result["solve_time"]
         
@@ -409,7 +430,10 @@ function branchandbound_frob_matrixcomp(
                 solution["Y"] = copy(Y_relax)
                 solution["U"] = copy(U_relax)
                 solution["X"] = copy(X_relax)
-                now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
+                now_gap = add_update!(
+                    printlist, instance, node_id, counter, 
+                    lower, upper, start_time,
+                )
                 last_updated_counter = counter
             end
             split_flag = false
@@ -424,19 +448,19 @@ function branchandbound_frob_matrixcomp(
         nodes_relax_feasible_split += 1
         if branching_region == "box"
             if branching_type == "lexicographic"
-                (diff, ind) = findmax(U_upper - U_lower)
+                (diff, ind) = findmax(current_node.U_upper - current_node.U_lower)
             elseif branching_type == "gradient"
                 α = - γ * inv(relax_result["Y"]) * relax_result["X"]
                 (_, ind) = findmax(abs.(α))
-                diff = U_upper[ind] - U_lower[ind]
+                diff = current_node.U_upper[ind] - current_node.U_lower[ind]
             end
-            mid = U_lower[ind] + diff / 2
-            U_lower_left = U_lower
-            U_upper_left = copy(U_upper)
+            mid = current_node.U_lower[ind] + diff / 2
+            U_lower_left = current_node.U_lower
+            U_upper_left = copy(current_node.U_upper)
             U_upper_left[ind] = mid
-            U_lower_right = copy(U_lower)
+            U_lower_right = copy(current_node.U_lower)
             U_lower_right[ind] = mid
-            U_upper_right = U_upper
+            U_upper_right = current_node.U_upper
             left_child_node = BBNode(
                 U_lower = U_lower_left,
                 U_upper = U_upper_left,
@@ -453,19 +477,19 @@ function branchandbound_frob_matrixcomp(
             )
         elseif branching_region in ["angular", "polyhedral", "hybrid"]
             if branching_type == "lexicographic"
-                (diff, ind) = findmax(φ_upper - φ_lower)
+                (diff, ind) = findmax(current_node.φ_upper - current_node.φ_lower)
             elseif branching_type == "gradient"
                 error("""
                 Branching type "gradient" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
                 """)
             end
-            mid = φ_lower[ind] + diff / 2
-            φ_lower_left = φ_lower
-            φ_upper_left = copy(φ_upper)
+            mid = current_node.φ_lower[ind] + diff / 2
+            φ_lower_left = current_node.φ_lower
+            φ_upper_left = copy(current_node.φ_upper)
             φ_upper_left[ind] = mid
-            φ_lower_right = copy(φ_lower)
+            φ_lower_right = copy(current_node.φ_lower)
             φ_lower_right[ind] = mid
-            φ_upper_right = φ_upper
+            φ_upper_right = current_node.φ_upper
             left_child_node = BBNode(
                 φ_lower = φ_lower_left,
                 φ_upper = φ_upper_left,
@@ -491,13 +515,19 @@ function branchandbound_frob_matrixcomp(
             pop!(lower_bounds, anc_node_id)
             if minimum(values(lower_bounds)) > lower
                 lower = minimum(values(lower_bounds))
-                now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
+                now_gap = add_update!(
+                    printlist, instance, node_id, counter, 
+                    lower, upper, start_time,
+                )
                 last_updated_counter = counter
             end
         end
 
         if node_id == 1
-            now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
+            now_gap = add_update!(
+                printlist, instance, node_id, counter, 
+                lower, upper, start_time,
+            )
             last_updated_counter = counter
             if root_only
                 break
@@ -505,7 +535,10 @@ function branchandbound_frob_matrixcomp(
         end
 
         if ((counter ÷ update_step) > (last_updated_counter ÷ update_step))
-            now_gap = add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
+            now_gap = add_update!(
+                printlist, instance, node_id, counter, 
+                lower, upper, start_time,
+            )
             last_updated_counter = counter
         end
     end
