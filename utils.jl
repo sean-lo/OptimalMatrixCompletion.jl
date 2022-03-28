@@ -24,14 +24,16 @@ function make_matrix_posdef(H; tol = 1e-3, kind = "simple")
     model = Model(Mosek.Optimizer)
     if kind == "tight"
         @variable(model, δ[1:n] ≥ 0)
-        @SDconstraint(model, H + Matrix(Diagonal(δ)) ≥ zeros(n, n))
+        # @SDconstraint(model, H + Matrix(Diagonal(δ)) ≥ zeros(n, n))
+        @constraint(model, H + Matrix(Diagonal(δ)) in PSDCone())
         @objective(model, Min, sum(δ))
         optimize!(model)
         δ = JuMP.value.(δ)
         H_new = H + Matrix(Diagonal(JuMP.value.(δ))) + tol * I
     elseif kind == "loose"
         @variable(model, δ ≥ 0)
-        @SDconstraint(model, H + (δ * Matrix(1.0 * I, n, n)) ≥ zeros(n, n))
+        # @SDconstraint(model, H + (δ * Matrix(1.0 * I, n, n)) ≥ zeros(n, n))
+        @constraint(model, H + (δ * Matrix(1.0 * I, n, n)) in PSDCone())        
         @objective(model, Min, δ)
         optimize!(model)
         δ = JuMP.value.(δ)
