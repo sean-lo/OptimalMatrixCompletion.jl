@@ -523,7 +523,14 @@ function branchandbound_frob_matrixcomp(
             end
         end
 
-        if node_id == 1
+
+        if (
+            node_id == 1 
+            || (counter ÷ update_step) > (last_updated_counter ÷ update_step)
+            || now_gap ≤ gap 
+            || counter ≥ max_steps
+            || time() - start_time > time_limit
+        )
             now_gap = add_update!(
                 printlist, instance, node_id, counter, 
                 lower, upper, start_time,
@@ -532,14 +539,6 @@ function branchandbound_frob_matrixcomp(
             if root_only
                 break
             end
-        end
-
-        if ((counter ÷ update_step) > (last_updated_counter ÷ update_step))
-            now_gap = add_update!(
-                printlist, instance, node_id, counter, 
-                lower, upper, start_time,
-            )
-            last_updated_counter = counter
         end
     end
 
