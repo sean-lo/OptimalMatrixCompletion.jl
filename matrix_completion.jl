@@ -783,6 +783,16 @@ function relax_feasibility_frob_matrixcomp(
         t[i,j1,j2] == 0.0
     )
 
+    # 2-norm of columns of U are ≤ 1
+    @constraint(
+        model,
+        [j = 1:k],
+        [
+            1;
+            U[:,j]
+        ] in SecondOrderCone()
+    )
+
     @objective(
         model,
         Min,
@@ -1076,6 +1086,16 @@ function relax_frob_matrixcomp(
         model,
         [i = 1:n, j1 = 2:k, j2 = 1:(j1-1)],
         t[i,j1,j2] == 0.0
+    )
+    
+    # 2-norm of columns of U are ≤ 1
+    @constraint(
+        model,
+        [j = 1:k],
+        [
+            1;
+            U[:,j]
+        ] in SecondOrderCone()
     )
 
     @objective(
