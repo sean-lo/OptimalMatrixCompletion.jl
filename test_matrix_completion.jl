@@ -34,20 +34,7 @@ function test_relax_frob_matrixcomp(
         Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
         """)
     end
-    if n_indices < (n + m) * k
-        error("""
-        System is under-determined. 
-        n_indices must be at least (n + m) * k.
-        """)
-    end
-    if n_indices > n * m
-        error("""
-        Cannot generate random indices of length more than the size of matrix A.
-        """)
-    end
-    Random.seed!(seed)
-    A = randn(Float64, (n, k)) * randn(Float64, (k, m))
-    indices = generate_masked_bitmatrix(n, m, n_indices)
+    (A, indices) = generate_matrixcomp_data(k, m, n, n_indices, seed)
 
     return relax_frob_matrixcomp(
         n, k, relaxation, branching_region,
@@ -226,25 +213,15 @@ function test_alternating_minimization(
     seed::Int,
     ;
     γ::Float64 = 1.0,
-    λ::Float64 = 1.0,
+    λ::Float64 = 0.0,
+    ϵ::Float64 = 1e-10,
+    max_iters::Int = 10000,
 )
-    if n_indices < (n + m) * k
-        error("""
-        System is under-determined. 
-        n_indices must be at least (n + m) * k.
-        """)
-    end
-    if n_indices > n * m
-        error("""
-        Cannot generate random indices of length more than the size of matrix A.
-        """)
-    end
-    Random.seed!(seed)
-    A = randn(Float64, (n, k)) * randn(Float64, (k, m))
-    indices = generate_masked_bitmatrix(n, m, n_indices)
+    (A, indices) = generate_matrixcomp_data(k, m, n, n_indices, seed)
 
     return alternating_minimization(
-        A, k, indices, γ, λ,
+        A, k, indices, γ, λ;
+        ϵ = ϵ, max_iters = max_iters,
     )
 end
 
@@ -328,20 +305,7 @@ function test_branchandbound_frob_matrixcomp(
         Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
         """)
     end
-    if n_indices < (n + m) * k
-        error("""
-        System is under-determined. 
-        n_indices must be at least (n + m) * k.
-        """)
-    end
-    if n_indices > n * m
-        error("""
-        Cannot generate random indices of length more than the size of matrix A.
-        """)
-    end
-    Random.seed!(seed)
-    A = randn(Float64, (n, k)) * randn(Float64, (k, m))
-    indices = generate_masked_bitmatrix(n, m, n_indices)
+    (A, indices) = generate_matrixcomp_data(k, m, n, n_indices, seed)
 
     log_time = Dates.now()
     solution, printlist, instance = branchandbound_frob_matrixcomp(

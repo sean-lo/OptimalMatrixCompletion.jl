@@ -55,9 +55,33 @@ function generate_masked_bitmatrix(
     dim1::Int,
     dim2::Int,
     sparsity::Int,
+    seed::Int,
 )
-    index_pairs = randperm(dim1 * dim2)[1:sparsity]
+    index_pairs = randperm(MersenneTwister(seed), dim1 * dim2)[1:sparsity]
     index_vec = zeros(dim1 * dim2)
     index_vec[index_pairs] .= 1.0
     return reshape(index_vec, (dim1, dim2))
+end
+
+function generate_matrixcomp_data(
+    k::Int,
+    m::Int,
+    n::Int,
+    n_indices::Int,
+    seed::Int,
+)
+    if n_indices < (n + m) * k
+        error("""
+        System is under-determined. 
+        n_indices must be at least (n + m) * k.
+        """)
+    end
+    if n_indices > n * m
+        error("""
+        Cannot generate random indices of length more than the size of matrix A.
+        """)
+    end
+    A = randn(MersenneTwister(seed), Float64, (n, k)) * randn(MersenneTwister(seed), Float64, (k, m))
+    indices = generate_masked_bitmatrix(n, m, n_indices, seed)
+    return A, indices
 end
