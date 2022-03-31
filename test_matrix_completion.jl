@@ -285,6 +285,8 @@ function test_branchandbound_frob_matrixcomp(
     ;
     γ::Float64 = 1.0,
     λ::Float64 = 0.0,
+    noise::Bool = false,
+    ϵ::Float64 = 0.01,
     relaxation::String = "SDP",
     branching_region::String = "angular",
     branching_type::String = "lexicographic",
@@ -318,7 +320,10 @@ function test_branchandbound_frob_matrixcomp(
         Node selection must be either "breadthfirst" or "bestfirst"; $node_selection supplied instead.
         """)
     end
-    (A, indices) = generate_matrixcomp_data(k, m, n, n_indices, seed)
+    (A, indices) = generate_matrixcomp_data(
+        k, m, n, n_indices, seed; 
+        noise = noise, ϵ = ϵ,
+    )
 
     log_time = Dates.now()
     solution, printlist, instance = branchandbound_frob_matrixcomp(

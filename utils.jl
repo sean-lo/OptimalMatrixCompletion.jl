@@ -69,6 +69,9 @@ function generate_matrixcomp_data(
     n::Int,
     n_indices::Int,
     seed::Int,
+    ;
+    noise::Bool = false,
+    ϵ::Float64 = 0.01,
 )
     if n_indices < (n + m) * k
         error("""
@@ -82,6 +85,9 @@ function generate_matrixcomp_data(
         """)
     end
     A = randn(MersenneTwister(seed), Float64, (n, k)) * randn(MersenneTwister(seed), Float64, (k, m))
+    if noise
+        A = A + ϵ * randn(MersenneTwister(seed), Float64, (n, m))
+    end
     indices = generate_masked_bitmatrix(n, m, n_indices, seed)
     return A, indices
 end
