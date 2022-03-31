@@ -288,6 +288,7 @@ function test_branchandbound_frob_matrixcomp(
     relaxation::String = "SDP",
     branching_region::String = "angular",
     branching_type::String = "lexicographic",
+    node_selection::String = "breadthfirst",
     root_only::Bool = false,
     max_steps::Int = 10000,
     time_limit::Int = 3600,
@@ -305,6 +306,18 @@ function test_branchandbound_frob_matrixcomp(
         Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
         """)
     end
+    if !(branching_type in ["lexicographic", "gradient"])
+        error("""
+        Invalid input for branching type.
+        Branching type must be either "lexicographic" or "gradient"; $branching_type supplied instead.
+        """)
+    end
+    if !(node_selection in ["breadthfirst"])
+        error("""
+        Invalid input for node selection.
+        Node selection must be "breadthfirst"; $node_selection supplied instead.
+        """)
+    end
     (A, indices) = generate_matrixcomp_data(k, m, n, n_indices, seed)
 
     log_time = Dates.now()
@@ -318,6 +331,7 @@ function test_branchandbound_frob_matrixcomp(
         relaxation = relaxation,
         branching_region = branching_region,
         branching_type = branching_type,
+        node_selection = node_selection,
         root_only = root_only,
         max_steps = max_steps,
         time_limit = time_limit,

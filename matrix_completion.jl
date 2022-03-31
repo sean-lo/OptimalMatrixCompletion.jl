@@ -35,6 +35,7 @@ function branchandbound_frob_matrixcomp(
     relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
     branching_region::String = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
     branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "gradient"
+    node_selection::String = "breadthfirst", # determining which node selection strategy to use: currently "breadthfirst"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     root_only::Bool = false, # if true, only solves relaxation at root node
     max_steps::Int = 1000000,
@@ -77,6 +78,12 @@ function branchandbound_frob_matrixcomp(
         Branching type must be either "lexicographic" or "gradient"; $branching_type supplied instead.
         """)
     end
+    if !(node_selection in ["breadthfirst"])
+        error("""
+        Invalid input for node selection.
+        Node selection must be "breadthfirst"; $node_selection supplied instead.
+        """)
+    end
 
     if !(size(A) == size(indices))
         error("""
@@ -101,6 +108,7 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("Relaxation:        %10s\n", relaxation),
         Printf.@sprintf("Branching region:  %10s\n", branching_region),
         Printf.@sprintf("Branching type:    %10s\n", branching_type),
+        Printf.@sprintf("Node selection:    %10s\n", node_selection),
         Printf.@sprintf("Optimality gap:    %10g\n", gap),
         Printf.@sprintf("Maximum nodes:     %10d\n", max_steps),
         Printf.@sprintf("Time limit (s):    %10d\n", time_limit),
@@ -124,6 +132,8 @@ function branchandbound_frob_matrixcomp(
         "λ" => λ,
         "relaxation" => relaxation,
         "branching_region" => branching_region,
+        "branching_type" => branching_type,
+        "node_selection" => node_selection,
         "optimality_gap" => gap,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
@@ -259,49 +269,8 @@ function branchandbound_frob_matrixcomp(
         time() - start_time ≤ time_limit
     )
         if length(nodes) != 0
-            if branching_region == "box"
+            if node_selection == "breadthfirst"
                 current_node = popfirst!(nodes)
-                node_id = current_node.node_id
-            elseif branching_region == "angular"
-                current_node = popfirst!(nodes)
-                node_id = current_node.node_id
-                # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
-                U_ranges_results = φ_ranges_to_U_ranges(
-                    current_node.φ_lower, 
-                    current_node.φ_upper,
-                )
-                current_node.U_lower = U_ranges_results["U_lower"]
-                current_node.U_upper = U_ranges_results["U_upper"]
-                solve_time_U_ranges += U_ranges_results["time_taken"]
-            elseif branching_region == "polyhedral"
-                current_node = popfirst!(nodes)
-                node_id = current_node.node_id
-                polyhedra_results = φ_ranges_to_polyhedra(
-                    current_node.φ_lower, 
-                    current_node.φ_upper, 
-                    false,
-                )
-                polyhedra = polyhedra_results["polyhedra"]
-                solve_time_polyhedra += polyhedra_results["time_taken"]
-            elseif branching_region == "hybrid"   
-                current_node = popfirst!(nodes)
-                φ_lower = current_node.φ_lower
-                φ_upper = current_node.φ_upper
-                node_id = current_node.node_id
-                U_ranges_results = φ_ranges_to_U_ranges(
-                    current_node.φ_lower, 
-                    current_node.φ_upper,
-                )
-                current_node.U_lower = U_ranges_results["U_lower"]
-                current_node.U_upper = U_ranges_results["U_upper"]
-                solve_time_U_ranges += U_ranges_results["time_taken"]
-                polyhedra_results = φ_ranges_to_polyhedra(
-                    current_node.φ_lower, 
-                    current_node.φ_upper, 
-                    false,
-                )
-                polyhedra = polyhedra_results["polyhedra"]
-                solve_time_polyhedra += polyhedra_results["time_taken"]
             end
         else
             now_gap = add_update!(
@@ -309,6 +278,47 @@ function branchandbound_frob_matrixcomp(
                 lower, upper, start_time,
             )
             break
+        end
+
+        if branching_region == "box"
+            node_id = current_node.node_id
+        elseif branching_region == "angular"
+            node_id = current_node.node_id
+            # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
+            U_ranges_results = φ_ranges_to_U_ranges(
+                current_node.φ_lower, 
+                current_node.φ_upper,
+            )
+            current_node.U_lower = U_ranges_results["U_lower"]
+            current_node.U_upper = U_ranges_results["U_upper"]
+            solve_time_U_ranges += U_ranges_results["time_taken"]
+        elseif branching_region == "polyhedral"
+            node_id = current_node.node_id
+            polyhedra_results = φ_ranges_to_polyhedra(
+                current_node.φ_lower, 
+                current_node.φ_upper, 
+                false,
+            )
+            polyhedra = polyhedra_results["polyhedra"]
+            solve_time_polyhedra += polyhedra_results["time_taken"]
+        elseif branching_region == "hybrid"
+            φ_lower = current_node.φ_lower
+            φ_upper = current_node.φ_upper
+            node_id = current_node.node_id
+            U_ranges_results = φ_ranges_to_U_ranges(
+                current_node.φ_lower, 
+                current_node.φ_upper,
+            )
+            current_node.U_lower = U_ranges_results["U_lower"]
+            current_node.U_upper = U_ranges_results["U_upper"]
+            solve_time_U_ranges += U_ranges_results["time_taken"]
+            polyhedra_results = φ_ranges_to_polyhedra(
+                current_node.φ_lower, 
+                current_node.φ_upper, 
+                false,
+            )
+            polyhedra = polyhedra_results["polyhedra"]
+            solve_time_polyhedra += polyhedra_results["time_taken"]
         end
 
         split_flag = true
@@ -509,18 +519,22 @@ function branchandbound_frob_matrixcomp(
         push!(ancestry, (node_id, [counter + 1, counter + 2]))
         counter += 2
 
-        (anc_node_id, anc_children_node_ids) = ancestry[1]
-        if all(haskey(lower_bounds, id) for id in anc_children_node_ids)
-            popfirst!(ancestry)
-            pop!(lower_bounds, anc_node_id)
-            if minimum(values(lower_bounds)) > lower
-                lower = minimum(values(lower_bounds))
-                now_gap = add_update!(
-                    printlist, instance, node_id, counter, 
-                    lower, upper, start_time,
-                )
-                last_updated_counter = counter
+        stale_relations = []
+        for (index, (anc_node_id, anc_children_node_ids)) in enumerate(lower_bounds)
+            if all(haskey(lower_bounds, id) for id in anc_children_node_ids)
+                push!(stale_relations, index)
+                pop!(lower_bounds, anc_node_id)
             end
+        end
+        ancestry = deleteat!(ancestry, stale_relations)
+
+        if minimum(values(lower_bounds)) > lower
+            lower = minimum(values(lower_bounds))
+            now_gap = add_update!(
+                printlist, instance, node_id, counter, 
+                lower, upper, start_time,
+            )
+            last_updated_counter = counter
         end
 
 
