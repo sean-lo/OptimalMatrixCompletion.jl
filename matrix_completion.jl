@@ -35,7 +35,7 @@ function branchandbound_frob_matrixcomp(
     relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
     branching_region::String = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
     branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "gradient"
-    node_selection::String = "breadthfirst", # determining which node selection strategy to use: currently "breadthfirst"
+    node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     root_only::Bool = false, # if true, only solves relaxation at root node
     max_steps::Int = 1000000,
@@ -78,10 +78,10 @@ function branchandbound_frob_matrixcomp(
         Branching type must be either "lexicographic" or "gradient"; $branching_type supplied instead.
         """)
     end
-    if !(node_selection in ["breadthfirst"])
+    if !(node_selection in ["breadthfirst", "bestfirst"])
         error("""
         Invalid input for node selection.
-        Node selection must be "breadthfirst"; $node_selection supplied instead.
+        Node selection must be either "breadthfirst" or "bestfirst"; $node_selection supplied instead.
         """)
     end
 
@@ -223,7 +223,7 @@ function branchandbound_frob_matrixcomp(
     end
     push!(nodes, initial_node)
 
-    lower_bounds = Dict{Integer, Float64}()
+    lower_bounds = Dict{Integer, Float64}() # leaves' mapping from node_id to lower_bound
     ancestry = []
 
     # (2) number of nodes generated in total
@@ -271,6 +271,9 @@ function branchandbound_frob_matrixcomp(
         if length(nodes) != 0
             if node_selection == "breadthfirst"
                 current_node = popfirst!(nodes)
+            elseif node_selection == "bestfirst"
+                (min_LB, min_LB_index) = findmin(node.LB for node in nodes)
+                current_node = popat!(nodes, min_LB_index)
             end
         else
             now_gap = add_update!(
