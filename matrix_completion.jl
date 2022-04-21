@@ -35,8 +35,7 @@ function branchandbound_frob_matrixcomp(
     ;
     relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
     branching_region::String = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
-    branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "gradient"
-    node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst"
+    node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     root_only::Bool = false, # if true, only solves relaxation at root node
     max_steps::Int = 1000000,
@@ -87,10 +86,10 @@ function branchandbound_frob_matrixcomp(
         Branching type must be either "lexicographic" or "gradient"; $branching_type supplied instead.
         """)
     end
-    if !(node_selection in ["breadthfirst", "bestfirst"])
+    if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst"])
         error("""
         Invalid input for node selection.
-        Node selection must be either "breadthfirst" or "bestfirst"; $node_selection supplied instead.
+        Node selection must be either "breadthfirst" or "bestfirst" or "depthfirst"; $node_selection supplied instead.
         """)
     end
 
@@ -286,8 +285,18 @@ function branchandbound_frob_matrixcomp(
             if node_selection == "breadthfirst"
                 current_node = popfirst!(nodes)
             elseif node_selection == "bestfirst"
-                (min_LB, min_LB_index) = findmin(node.LB for node in nodes)
-                current_node = popat!(nodes, min_LB_index)
+                # break ties by depth-first search (choosing the node most recently added to queue)
+                (min_LB, min_LB_index) = findmin(node.LB for node in reverse(nodes))
+                current_node = popat!(
+                    nodes, 
+                    length(nodes) + 1 - min_LB_index,
+                )
+            elseif node_selection == "depthfirst"
+                current_node = pop!(nodes)
+            elseif node_selection == "sdp_relax_eigen"
+                # might only work well with box branching - which has some issues already
+                # get eigenvalues of Y
+                nothing # TODO
             end
             nodes_explored += 1
         else

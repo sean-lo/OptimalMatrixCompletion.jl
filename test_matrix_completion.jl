@@ -314,10 +314,10 @@ function test_branchandbound_frob_matrixcomp(
         Branching type must be either "lexicographic" or "gradient"; $branching_type supplied instead.
         """)
     end
-    if !(node_selection in ["breadthfirst", "bestfirst"])
+    if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst"])
         error("""
         Invalid input for node selection.
-        Node selection must be either "breadthfirst" or "bestfirst"; $node_selection supplied instead.
+        Node selection must be either "breadthfirst" or "bestfirst" or "depthfirst"; $node_selection supplied instead.
         """)
     end
     (A, indices) = generate_matrixcomp_data(
