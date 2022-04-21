@@ -334,63 +334,110 @@ function branchandbound_frob_matrixcomp(
 
         split_flag = true
 
+        # possible, since we may not explore tree breadth-first
+        # (should not be possible for breadth-first search)
         if current_node.LB > solution["objective"]
             split_flag = false
             nodes_dominated += 1
         end
 
-        if branching_region in ["box", "angular"]
-            relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                n, k, relaxation, branching_region;
-                U_lower = current_node.U_lower, 
-                U_upper = current_node.U_upper,
-            )
-        elseif branching_region == "polyhedral"
-            relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                n, k, relaxation, branching_region;
-                polyhedra = polyhedra,
-            )
-        elseif branching_region == "hybrid"
-            relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                n, k, relaxation, branching_region;
+        if split_flag
+            if branching_region in ["box", "angular"]
+                relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
+                    n, k, relaxation, branching_region;
+                    U_lower = current_node.U_lower, 
+                    U_upper = current_node.U_upper,
+                )
+            elseif branching_region == "polyhedral"
+                relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
+                    n, k, relaxation, branching_region;
+                    polyhedra = polyhedra,
+                )
+            elseif branching_region == "hybrid"
+                relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
+                    n, k, relaxation, branching_region;
+                    U_lower = current_node.U_lower, 
+                    U_upper = current_node.U_upper,
+                    polyhedra = polyhedra,
+                )
+            end
+            solve_time_relaxation_feasibility += relax_feasibility_result["time_taken"]
+            if !relax_feasibility_result["feasible"]
+                nodes_relax_infeasible += 1
                 split_flag = false
             end
-
+        end
 
         # solve SDP / SOCP relaxation of master problem
-        if branching_region in ["box", "angular"]
-            relax_result = @suppress relax_frob_matrixcomp(
-                n, k, relaxation, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
-                U_upper = current_node.U_upper,
-            )
-        elseif branching_region == "polyhedral"
-            relax_result = @suppress relax_frob_matrixcomp(
-                n, k, relaxation, branching_region, A, indices, γ, λ; polyhedra = polyhedra,
-            )
-        elseif branching_region == "hybrid"
-            relax_result = @suppress relax_frob_matrixcomp(
-                n, k, relaxation, branching_region, A, indices, γ, λ; 
-                U_lower = current_node.U_lower, 
-                U_upper = current_node.U_upper, 
-                polyhedra = polyhedra,
-            )
-        end
-        solve_time_relaxation += relax_result["solve_time"]
-        
+        if split_flag
+            if branching_region in ["box", "angular"]
+                relax_result = @suppress relax_frob_matrixcomp(
+                    n, k, relaxation, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
+                    U_upper = current_node.U_upper,
+                )
+            elseif branching_region == "polyhedral"
+                relax_result = @suppress relax_frob_matrixcomp(
+                    n, k, relaxation, branching_region, A, indices, γ, λ; polyhedra = polyhedra,
+                )
+            elseif branching_region == "hybrid"
+                relax_result = @suppress relax_frob_matrixcomp(
+                    n, k, relaxation, branching_region, A, indices, γ, λ; 
+                    U_lower = current_node.U_lower, 
+                    U_upper = current_node.U_upper, 
+                    polyhedra = polyhedra,
+                )
+            end
+            solve_time_relaxation += relax_result["solve_time"]
+            if relax_result["feasible"] == false # should not happen, since this should be checked by relax_feasibility_frob_matrixcomp
+                nodes_relax_infeasible += 1
                 split_flag = false
             elseif relax_result["termination_status"] in [
-            if current_node.node_id == 1
-        end
-
-        # if solution for relax_result has higher objective than best found so far: prune the node
-        if objective_relax ≥ solution["objective"]
-            nodes_relax_feasible_pruned += 1
-            split_flag = false
+                MOI.OPTIMAL,
+                MOI.LOCALLY_SOLVED, # TODO: investigate this
+                MOI.SLOW_PROGRESS # TODO: investigate this
+            ]
+                nodes_relax_feasible += 1
+                objective_relax = relax_result["objective"]
+                lower_bounds[current_node.node_id] = objective_relax
+                Y_relax = relax_result["Y"]
+                U_relax = relax_result["U"]
+                t_relax = relax_result["t"]
+                X_relax = relax_result["X"]
+                Θ_relax = relax_result["Θ"]
+                if current_node.node_id == 1
+                    lower = objective_relax
+                end
+                # if solution for relax_result has higher objective than best found so far: prune the node
+                if objective_relax ≥ solution["objective"]
+                    nodes_relax_feasible_pruned += 1
+                    delete!(lower_bounds, current_node.node_id)
+                    split_flag = false            
+                end
+            end
         end
 
         # if solution for relax_result is feasible for original problem:
         # prune this node;
         # if it is the best found so far, update solution
+        if split_flag
+            if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, t_relax, X_relax, Θ_relax)
+                nodes_master_feasible += 1
+                # if best found so far, update solution
+                if objective_relax < solution["objective"]
+                    nodes_master_feasible_improvement += 1
+                    solution["objective"] = objective_relax
+                    upper = objective_relax
+                    solution["Y"] = copy(Y_relax)
+                    solution["U"] = copy(U_relax)
+                    solution["X"] = copy(X_relax)
+                    now_gap = add_update!(
+                        printlist, instance, nodes_explored, counter, lower, upper, start_time,
+                    )
+                    last_updated_counter = counter
+                end
+                split_flag = false
+            end
+        end
         
 
         # branch on variable
