@@ -337,7 +337,6 @@ function branchandbound_frob_matrixcomp(
         if current_node.LB > solution["objective"]
             split_flag = false
             nodes_dominated += 1
-            continue
         end
 
         if branching_region in ["box", "angular"]
@@ -354,17 +353,8 @@ function branchandbound_frob_matrixcomp(
         elseif branching_region == "hybrid"
             relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
                 n, k, relaxation, branching_region;
-                U_lower = current_node.U_lower, 
-                U_upper = current_node.U_upper,
-                polyhedra = polyhedra,
-            )
-        end
-        solve_time_relaxation_feasibility += relax_feasibility_result["time_taken"]
-        if !relax_feasibility_result["feasible"]
-            nodes_relax_infeasible += 1
-            split_flag = false
-            continue
-        end
+                split_flag = false
+            end
 
 
         # solve SDP / SOCP relaxation of master problem
@@ -387,41 +377,8 @@ function branchandbound_frob_matrixcomp(
         end
         solve_time_relaxation += relax_result["solve_time"]
         
-        if relax_result["feasible"] == false # should not happen, since this should be checked by relax_feasibility_frob_matrixcomp
-            nodes_relax_infeasible += 1
-            split_flag = false
-            continue
-        elseif relax_result["termination_status"] in [
-            MOI.OPTIMAL,
-            MOI.LOCALLY_SOLVED, # TODO: investigate this
-            MOI.SLOW_PROGRESS # TODO: investigate this
-        ]
-            ## TODO: comment these sections on/off to debug MOI.LOCALLY_SOLVED and MOI.SLOW_PROGRESS
-            # if relax_result["termination_status"] == MOI.SLOW_PROGRESS
-            #     error("""
-            #     Unexpected termination status code: MOI.SLOW_PROGRESS;
-            #     k: $k
-            #     m: $m
-            #     n: $n
-            #     num_indices: $(convert(Int, round(sum(indices))))
-            #     relaxation: $relaxation
-            #     branching_region: $branching_region
-            #     """)
-            # end
-            # if relax_result["termination_status"] == MOI.LOCALLY_SOLVED
-            #     error("""
-            #     Unexpected termination status code: MOI.LOCALLY_SOLVED;
-            #     k: $k
-            #     m: $m
-            #     n: $n
-            #     num_indices: $(convert(Int, round(sum(indices))))
-            #     relaxation: $relaxation
-            #     branching_region: $branching_region
-            #     """)
-            # end
-            nodes_relax_feasible += 1
-            objective_relax = relax_result["objective"]
-            lower_bounds[current_node.node_id] = objective_relax
+                split_flag = false
+            elseif relax_result["termination_status"] in [
             if current_node.node_id == 1
         end
 
@@ -434,27 +391,7 @@ function branchandbound_frob_matrixcomp(
         # if solution for relax_result is feasible for original problem:
         # prune this node;
         # if it is the best found so far, update solution
-        if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, t_relax, X_relax, Θ_relax)
-            nodes_master_feasible += 1
-            # if best found so far, update solution
-            if objective_relax < solution["objective"]
-                nodes_master_feasible_improvement += 1
-                solution["objective"] = objective_relax
-                upper = objective_relax
-                solution["Y"] = copy(Y_relax)
-                solution["U"] = copy(U_relax)
-                solution["X"] = copy(X_relax)
-                now_gap = add_update!(
-                    printlist, instance, nodes_explored, counter, lower, upper, start_time,
-                )
-                last_updated_counter = counter
-            end
-            split_flag = false
-        end
-
-        if split_flag == false
-            continue
-        end
+        
 
         # branch on variable
         # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
