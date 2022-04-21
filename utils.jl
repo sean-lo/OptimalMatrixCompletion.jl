@@ -57,10 +57,19 @@ function generate_masked_bitmatrix(
     sparsity::Int,
     seed::Int,
 )
-    index_pairs = randperm(MersenneTwister(seed), dim1 * dim2)[1:sparsity]
-    index_vec = zeros(dim1 * dim2)
-    index_vec[index_pairs] .= 1.0
-    return reshape(index_vec, (dim1, dim2))
+    Random.seed!(seed)
+    while true
+        index_pairs = randperm(dim1 * dim2)[1:sparsity]
+        index_vec = zeros(dim1 * dim2)
+        index_vec[index_pairs] .= 1.0
+        indices = reshape(index_vec, (dim1, dim2))
+        if (
+            minimum(sum(indices, dims=1)) ≥ 0.5
+            && minimum(sum(indices, dims=2)) ≥ 0.5
+        )
+            return indices
+        end
+    end
 end
 
 function generate_matrixcomp_data(
