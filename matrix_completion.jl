@@ -233,8 +233,10 @@ function branchandbound_frob_matrixcomp(
     end
     push!(nodes, initial_node)
 
-    lower_bounds = Dict{Integer, Float64}() # leaves' mapping from node_id to lower_bound
-    ancestry = []
+    # leaves' mapping from node_id to lower_bound
+    lower_bounds = Dict{Int, Float64}() 
+    minimum_lower_bounds = Inf
+    ancestry = Dict{Int, Vector{Int}}()
 
     # (1) number of nodes explored so far
     nodes_explored = 0
@@ -517,42 +519,48 @@ function branchandbound_frob_matrixcomp(
             )
         end
         push!(nodes, left_child_node, right_child_node)
-        push!(ancestry, (node_id, [counter + 1, counter + 2]))
-        counter += 2
+        ancestry[current_node.node_id] = [counter + 1, counter + 2]
 
-        stale_relations = []
-        for (index, (anc_node_id, anc_children_node_ids)) in enumerate(lower_bounds)
-            if all(haskey(lower_bounds, id) for id in anc_children_node_ids)
-                push!(stale_relations, index)
-                pop!(lower_bounds, anc_node_id)
+        # cleanup actions - to be done regardless of whether split_flag was true or false
+        if current_node.node_id != 1
+            ancestry[current_node.parent_id] = setdiff(ancestry[current_node.parent_id], [current_node.node_id])
+            if length(ancestry[current_node.parent_id]) == 0
+                delete!(ancestry, current_node.parent_id)
+                delete!(lower_bounds, current_node.parent_id)
             end
         end
-        ancestry = deleteat!(ancestry, stale_relations)
 
-        if minimum(values(lower_bounds)) > lower
-            lower = minimum(values(lower_bounds))
+        # update minimum of lower bounds
+        if length(lower_bounds) == 0
             now_gap = add_update!(
-                printlist, instance, node_id, counter, 
+                printlist, instance, nodes_explored, counter, 
                 lower, upper, start_time,
             )
             last_updated_counter = counter
-        end
-
-
-        if (
-            node_id == 1 
-            || (counter ÷ update_step) > (last_updated_counter ÷ update_step)
-            || now_gap ≤ gap 
-            || counter ≥ max_steps
-            || time() - start_time > time_limit
-        )
-            now_gap = add_update!(
-                printlist, instance, node_id, counter, 
-                lower, upper, start_time,
+        else
+            minimum_lower_bounds = minimum(values(lower_bounds))
+            if minimum_lower_bounds > lower
+                lower = minimum_lower_bounds
+                now_gap = add_update!(
+                    printlist, instance, nodes_explored, counter, 
+                    lower, upper, start_time,
+                )
+                last_updated_counter = counter
+            elseif (
+                current_node.node_id == 1 
+                || (counter ÷ update_step) > (last_updated_counter ÷ update_step)
+                || now_gap ≤ gap 
+                || counter ≥ max_steps
+                || time() - start_time > time_limit
             )
-            last_updated_counter = counter
-            if root_only
-                break
+                now_gap = add_update!(
+                    printlist, instance, nodes_explored, counter, 
+                    lower, upper, start_time,
+                )
+                last_updated_counter = counter
+                if root_only
+                    break
+                end
             end
         end
     end
