@@ -35,6 +35,8 @@ function branchandbound_frob_matrixcomp(
     ;
     relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
     branching_region::String = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
+    branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
+    branch_point::String = "midpoint", # determine which value to branch on: either "midpoint" or "current_point"
     node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     root_only::Bool = false, # if true, only solves relaxation at root node
@@ -80,10 +82,16 @@ function branchandbound_frob_matrixcomp(
         Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
         """)
     end
-    if !(branching_type in ["lexicographic", "gradient"])
+    if !(branching_type in ["lexicographic", "bounds", "gradient"])
         error("""
         Invalid input for branching type.
-        Branching type must be either "lexicographic" or "gradient"; $branching_type supplied instead.
+        Branching type must be either "lexicographic" or "bounds" or "gradient"; $branching_type supplied instead.
+        """)
+    end
+    if !(branch_point in ["midpoint", "current_point"])
+        error("""
+        Invalid input for branch point.
+        Branch point must be either "midpoint" or "current_point"; $branch_point supplied instead.
         """)
     end
     if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst"])
@@ -107,19 +115,20 @@ function branchandbound_frob_matrixcomp(
     printlist = [
         Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), "\n",
         "Starting branch-and-bound on a matrix completion problem.\n",
-        Printf.@sprintf("k:                 %10d\n", k),
-        Printf.@sprintf("m:                 %10d\n", m),
-        Printf.@sprintf("n:                 %10d\n", n),
-        Printf.@sprintf("num_indices:       %10d\n", sum(indices)),
-        Printf.@sprintf("γ:                 %10g\n", γ),
-        Printf.@sprintf("λ:                 %10g\n", λ),
-        Printf.@sprintf("Relaxation:        %10s\n", relaxation),
-        Printf.@sprintf("Branching region:  %10s\n", branching_region),
-        Printf.@sprintf("Branching type:    %10s\n", branching_type),
-        Printf.@sprintf("Node selection:    %10s\n", node_selection),
-        Printf.@sprintf("Optimality gap:    %10g\n", gap),
-        Printf.@sprintf("Maximum nodes:     %10d\n", max_steps),
-        Printf.@sprintf("Time limit (s):    %10d\n", time_limit),
+        Printf.@sprintf("k:                 %15d\n", k),
+        Printf.@sprintf("m:                 %15d\n", m),
+        Printf.@sprintf("n:                 %15d\n", n),
+        Printf.@sprintf("num_indices:       %15d\n", sum(indices)),
+        Printf.@sprintf("γ:                 %15g\n", γ),
+        Printf.@sprintf("λ:                 %15g\n", λ),
+        Printf.@sprintf("Relaxation:        %15s\n", relaxation),
+        Printf.@sprintf("Branching region:  %15s\n", branching_region),
+        Printf.@sprintf("Branching type:    %15s\n", branching_type),
+        Printf.@sprintf("Branch point:      %15s\n", branch_point),
+        Printf.@sprintf("Node selection:    %15s\n", node_selection),
+        Printf.@sprintf("Optimality gap:    %15g\n", gap),
+        Printf.@sprintf("Maximum nodes:     %15d\n", max_steps),
+        Printf.@sprintf("Time limit (s):    %15d\n", time_limit),
         "-----------------------------------------------------------------------------------\n",
         "|   Explored |      Total |      Lower |      Upper |        Gap |    Runtime (s) |\n",
         "-----------------------------------------------------------------------------------\n",
@@ -447,72 +456,143 @@ function branchandbound_frob_matrixcomp(
                 split_flag = false
             end
         end
-        
 
-        # branch on variable
-        # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
-        nodes_relax_feasible_split += 1
-        if branching_region == "box"
-            if branching_type == "lexicographic"
-                (diff, ind) = findmax(current_node.U_upper - current_node.U_lower)
-            elseif branching_type == "gradient"
-                α = - γ * inv(relax_result["Y"]) * relax_result["X"]
-                (_, ind) = findmax(abs.(α))
-                diff = current_node.U_upper[ind] - current_node.U_lower[ind]
+        if split_flag
+            # branch on variable
+            # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
+            nodes_relax_feasible_split += 1
+            if branching_region == "box"
+                # finding coordinates (i, j) to branch on
+                if branching_type == "lexicographic"
+                    (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
+                elseif branching_type == "bounds"
+                    (_, ind) = findmin(
+                        min.(
+                            abs.(current_node.U_upper - U_relax),
+                            abs.(current_node.U_lower - U_relax),
+                        )
+                    )
+                elseif branching_type == "gradient"
+                    deriv_U = ( - γ 
+                        * relax_result["α"]  # (n, m)
+                        * relax_result["α"]' # (m, n)
+                        * relax_result["U"]  # (n, k)
+                    ) # shape: (n, k)
+                    deriv_U_change = zeros(n,k)
+                    for i in 1:n, j in 1:k
+                        if deriv_U[i,j] < 0.0
+                            deriv_U_change[i,j] = deriv_U[i,j] * (
+                                current_node.U_upper[i,j] - relax_result["U"][i,j]
+                            )
+                        else
+                            deriv_U_change[i,j] = deriv_U[i,j] * (
+                                current_node.U_lower[i,j] - relax_result["U"][i,j]
+                            )
+                        end
+                    end
+                    (_, ind) = findmin(deriv_U_change)
+                end
+                # finding branch_val
+                if branch_point == "midpoint"
+                    diff = current_node.U_upper[ind] - current_node.U_lower[ind]
+                    branch_val = current_node.U_lower[ind] + diff / 2
+                elseif branch_point == "current_point"
+                    branch_val = relax_result["U"][ind]
+                end
+                # constructing child nodes
+                U_lower_left = current_node.U_lower
+                U_upper_left = copy(current_node.U_upper)
+                U_upper_left[ind] = branch_val
+                U_lower_right = copy(current_node.U_lower)
+                U_lower_right[ind] = branch_val
+                U_upper_right = current_node.U_upper
+                left_child_node = BBNode(
+                    U_lower = U_lower_left,
+                    U_upper = U_upper_left,
+                    node_id = counter + 1,
+                    # initialize a node's LB with the objective of relaxation of parent
+                    LB = objective_relax, 
+                    parent_id = current_node.node_id,
+                )
+                right_child_node = BBNode(
+                    U_lower = U_lower_right,
+                    U_upper = U_upper_right,
+                    node_id = counter + 2,
+                    # initialize a node's LB with the objective of relaxation of parent
+                    LB = objective_relax,
+                    parent_id = current_node.node_id,
+                )
+            elseif branching_region in ["angular", "polyhedral", "hybrid"]
+                φ_relax = zeros(n-1, k)
+                for j in 1:k
+                    φ_relax[:,j] = U_col_to_φ_col(relax_result["U"][:,j])
+                end
+                # finding coordinates (i, j) to branch on
+                if branching_type == "lexicographic"
+                    (_, ind) = findmax(current_node.φ_upper - current_node.φ_lower)
+                elseif branching_type == "bounds" # TODO: INCOMPLETE
+                    error("""
+                    Branching type "box" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
+                    """)
+                elseif branching_type == "gradient"
+                    deriv_U = ( - γ 
+                        * relax_result["α"]  # (n, m)
+                        * relax_result["α"]' # (m, n)
+                        * relax_result["U"]  # (n, k)
+                    ) # shape: (n, k)
+                    deriv_φ = zeros(n-1, k)
+                    for j in 1:k
+                        deriv_φ[:,j] = compute_jacobian(φ_relax[:,j])' * deriv_U[:,j]
+                    end
+                    deriv_φ_change = zeros(n-1,k)
+                    for i in 1:n-1, j in 1:k
+                        if deriv_φ[i,j] < 0.0
+                            deriv_φ_change[i,j] = deriv_φ[i,j] * (
+                                current_node.φ_upper[i,j] - φ_relax[i,j]
+                            )
+                        else
+                            deriv_φ_change[i,j] = deriv_φ[i,j] * (
+                                current_node.φ_lower[i,j] - φ_relax[i,j]
+                            )
+                        end
+                    end
+                    (_, ind) = findmin(deriv_φ_change)
+                end
+                # finding branch_val
+                if branch_point == "midpoint"
+                    diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
+                    branch_val = current_node.φ_lower[ind] + diff / 2
+                elseif branch_point == "current_point"
+                    branch_val = φ_relax[ind]
+                end
+                # constructing child nodes
+                φ_lower_left = current_node.φ_lower
+                φ_upper_left = copy(current_node.φ_upper)
+                φ_upper_left[ind] = branch_val
+                φ_lower_right = copy(current_node.φ_lower)
+                φ_lower_right[ind] = branch_val
+                φ_upper_right = current_node.φ_upper
+                left_child_node = BBNode(
+                    φ_lower = φ_lower_left,
+                    φ_upper = φ_upper_left,
+                    node_id = counter + 1,
+                    # initialize a node's LB with the objective of relaxation of parent
+                    LB = objective_relax,
+                    parent_id = current_node.node_id,
+                )
+                right_child_node = BBNode(
+                    φ_lower = φ_lower_right,
+                    φ_upper = φ_upper_right,
+                    node_id = counter + 2,
+                    # initialize a node's LB with the objective of relaxation of parent
+                    LB = objective_relax,
+                    parent_id = current_node.node_id,
+                )
             end
-            mid = current_node.U_lower[ind] + diff / 2
-            U_lower_left = current_node.U_lower
-            U_upper_left = copy(current_node.U_upper)
-            U_upper_left[ind] = mid
-            U_lower_right = copy(current_node.U_lower)
-            U_lower_right[ind] = mid
-            U_upper_right = current_node.U_upper
-            left_child_node = BBNode(
-                U_lower = U_lower_left,
-                U_upper = U_upper_left,
-                node_id = counter + 1,
-                # initialize a node's LB with the objective of relaxation of parent
-                LB = objective_relax, 
-            )
-            right_child_node = BBNode(
-                U_lower = U_lower_right,
-                U_upper = U_upper_right,
-                node_id = counter + 1,
-                # initialize a node's LB with the objective of relaxation of parent
-                LB = objective_relax,
-            )
-        elseif branching_region in ["angular", "polyhedral", "hybrid"]
-            if branching_type == "lexicographic"
-                (diff, ind) = findmax(current_node.φ_upper - current_node.φ_lower)
-            elseif branching_type == "gradient"
-                error("""
-                Branching type "gradient" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
-                """)
-            end
-            mid = current_node.φ_lower[ind] + diff / 2
-            φ_lower_left = current_node.φ_lower
-            φ_upper_left = copy(current_node.φ_upper)
-            φ_upper_left[ind] = mid
-            φ_lower_right = copy(current_node.φ_lower)
-            φ_lower_right[ind] = mid
-            φ_upper_right = current_node.φ_upper
-            left_child_node = BBNode(
-                φ_lower = φ_lower_left,
-                φ_upper = φ_upper_left,
-                node_id = counter + 1,
-                # initialize a node's LB with the objective of relaxation of parent
-                LB = objective_relax,
-            )
-            right_child_node = BBNode(
-                φ_lower = φ_lower_right,
-                φ_upper = φ_upper_right,
-                node_id = counter + 1,
-                # initialize a node's LB with the objective of relaxation of parent
-                LB = objective_relax,
-            )
+            push!(nodes, left_child_node, right_child_node)
+            ancestry[current_node.node_id] = [counter + 1, counter + 2]
+            counter += 2
         end
-        push!(nodes, left_child_node, right_child_node)
-        ancestry[current_node.node_id] = [counter + 1, counter + 2]
 
         # cleanup actions - to be done regardless of whether split_flag was true or false
         if current_node.node_id != 1
@@ -844,6 +924,29 @@ function relax_frob_matrixcomp(
     orthogonality_tolerance::Float64 = 0.0,
     solver_output::Int = 0,
 )
+    function compute_α(Y, γ, A, indices)
+        (n, m) = size(A)
+        α = zeros(size(A))
+        for j in 1:m
+            for i in 1:n
+                if indices[i,j] ≥ 0.5
+                    α[i,j] = (
+                        - γ * sum(
+                            Y[i,l] * A[l,j] * indices[l,j]
+                            for l in 1:n
+                        )
+                    ) / (
+                        1 + γ * sum(
+                            Y[i,l] * indices[l,j]
+                            for l in 1:n
+                        )
+                    ) + A[i,j]
+                end
+            end    
+        end
+        return α
+    end
+
     if !(relaxation in ["SDP", "SOCP"])
         error("""
         Invalid input for relaxation method.
@@ -1126,6 +1229,7 @@ function relax_frob_matrixcomp(
 
     optimize!(model)
     results = Dict(
+        "model" => model,
         "solve_time" => solve_time(model),
         "termination_status" => JuMP.termination_status(model),
     )
@@ -1136,6 +1240,7 @@ function relax_frob_matrixcomp(
     ]
         results["feasible"] = true
         results["objective"] = objective_value(model)
+        results["α"] = compute_α(value.(Y), γ, A, indices)
         results["Y"] = value.(Y)
         results["U"] = value.(U)
         results["t"] = value.(t)
@@ -1152,6 +1257,7 @@ function relax_frob_matrixcomp(
         if has_values(model)
             results["feasible"] = true
             results["objective"] = objective_value(model)
+            results["α"] = compute_α(value.(Y), γ, A, indices)
             results["Y"] = value.(Y)
             results["U"] = value.(U)
             results["t"] = value.(t)
@@ -1650,4 +1756,53 @@ function φ_ranges_to_polyhedra(
         "polyhedra" => polyhedra,
         "time_taken" => end_time - start_time,
     )
+end
+
+function U_col_to_φ_col(
+    U_col::Vector{Float64},
+)
+    (n,) = size(U_col)
+    tmp = copy(U_col)
+    φ_col = ones(n-1)
+    for i in 1:(n-1)
+        φ_col[i] = φ_col[i] * acos(tmp[i])
+        for j in (i+1):n
+            tmp[j] = tmp[j] / sin(acos(tmp[i]))
+        end
+    end
+    return φ_col
+end
+
+function compute_jacobian(
+    φ::Vector{Float64},
+)
+    n = size(φ, 1) + 1
+    jacobian = ones(n, n-1)
+    # set entries above main diagonal to zero
+    for j in 2:(n-1)
+        for i in 1:(j-1)
+            jacobian[i,j] = 0.0
+        end
+    end
+    # set sines
+    for j in 1:(n-1)
+        jacobian[j,j] *= - sin(φ[j])
+    end
+    for φ_index in 1:(n-1)
+        for j in setdiff(1:n-1, φ_index)
+            for i in max(j, φ_index+1):n
+                jacobian[i,j] *= sin(φ[φ_index])
+            end
+        end
+    end
+    # set cosines
+    for φ_index in 1:(n-1)
+        for j in 1:φ_index-1
+            jacobian[φ_index, j] *= cos(φ[φ_index])
+        end
+        for i in φ_index+1:n
+            jacobian[i, φ_index] *= cos(φ[φ_index])
+        end
+    end                
+    return jacobian
 end
