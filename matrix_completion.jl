@@ -23,6 +23,7 @@ using Polyhedra
     φ_upper::Union{Matrix{Float64}, Missing} = missing
     LB::Union{Float64, Missing} = missing
     node_id::Int
+    parent_id::Int
 end
 
 function branchandbound_frob_matrixcomp(
@@ -44,18 +45,26 @@ function branchandbound_frob_matrixcomp(
 )
 
 
-    function add_update!(printlist, instance, node_id, counter, lower, upper, start_time)
+    function add_update!(
+        printlist, instance, nodes_explored, counter, 
+        lower, upper, start_time,
+    )
         now_gap = (upper / lower) - 1
         current_time_elapsed = time() - start_time
         message = Printf.@sprintf(
             "| %10d | %10d | %10f | %10f | %10f | %10.3f  s  |\n",
-            node_id, counter, lower, upper, now_gap, current_time_elapsed,
+            nodes_explored, # Explored
+            counter, # Total
+            lower, # Objective
+            upper, # Incumbent
+            now_gap, # Gap
+            current_time_elapsed, # Runtime
         )
         print(stdout, message)
         push!(printlist, message)
         push!(
             instance["run_log"],
-            (node_id, counter, lower, upper, now_gap, current_time_elapsed)
+            (nodes_explored, counter, lower, upper, now_gap, current_time_elapsed)
         )
         return now_gap
     end
@@ -113,7 +122,7 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("Maximum nodes:     %10d\n", max_steps),
         Printf.@sprintf("Time limit (s):    %10d\n", time_limit),
         "-----------------------------------------------------------------------------------\n",
-        "|   Explored |      Total |  Objective |  Incumbent |        Gap |    Runtime (s) |\n",
+        "|   Explored |      Total |      Lower |      Upper |        Gap |    Runtime (s) |\n",
         "-----------------------------------------------------------------------------------\n",
     ]
     for message in printlist
@@ -187,8 +196,6 @@ function branchandbound_frob_matrixcomp(
         "X" => X_initial,
     )
 
-    # (1) number of nodes explored so far
-    node_id = 1
     nodes = []
     upper = objective_initial
     lower = -Inf
@@ -199,8 +206,9 @@ function branchandbound_frob_matrixcomp(
         initial_node = BBNode(
             U_lower = U_lower_initial, 
             U_upper = U_upper_initial, 
-            node_id = node_id,
+            node_id = 1,
             LB = lower,
+            parent_id = 0,
         )
     elseif branching_region == "angular"
         φ_lower_initial = zeros(n-1, k)
@@ -208,8 +216,9 @@ function branchandbound_frob_matrixcomp(
         initial_node = BBNode(
             φ_lower = φ_lower_initial, 
             φ_upper = φ_upper_initial, 
-            node_id = node_id,
+            node_id = 1,
             LB = lower,
+            parent_id = 0,
         )
     elseif branching_region in ["polyhedral", "hybrid"]
         φ_lower_initial = zeros(n-1, k)
@@ -217,8 +226,9 @@ function branchandbound_frob_matrixcomp(
         initial_node = BBNode(
             φ_lower = φ_lower_initial, 
             φ_upper = φ_upper_initial, 
-            node_id = node_id,
+            node_id = 1,
             LB = lower,
+            parent_id = 0,
         )
     end
     push!(nodes, initial_node)
@@ -226,42 +236,44 @@ function branchandbound_frob_matrixcomp(
     lower_bounds = Dict{Integer, Float64}() # leaves' mapping from node_id to lower_bound
     ancestry = []
 
+    # (1) number of nodes explored so far
+    nodes_explored = 0
     # (2) number of nodes generated in total
     counter = 1
     last_updated_counter = 1    
     now_gap = 1e5
 
-    # number of nodes whose parent has 
+    # (3) number of nodes whose parent has 
     # relaxation dominated by best solution found so far
     nodes_dominated = 0 # always pruned
-    # (3) number of nodes with infeasible relaxation
+    # (4) number of nodes with infeasible relaxation
     nodes_relax_infeasible = 0 # always pruned
-    # (4) number of nodes with feasible relaxation,
+    # (5) number of nodes with feasible relaxation,
     # a.k.a. number of relaxations solved
     nodes_relax_feasible = 0 
-    # (3) + (4) should yield (1)
+    # (3) + (4) + (5) should yield (1)
 
-    # (5) number of nodes with feasible relaxation
+    # (6) number of nodes with feasible relaxation
     # that have objective dominated by best upper bound so far
     nodes_relax_feasible_pruned = 0 # always pruned
-    # (6) number of nodes with feasible relaxation
+    # (7) number of nodes with feasible relaxation
     # that are also feasible for the master problem
     nodes_master_feasible = 0 # always pruned
-    # (7) number of nodes with feasible relaxation
+    # (8) number of nodes with feasible relaxation
     # that are also feasible for the master problem,
     # and improve on best upper bound so far
     nodes_master_feasible_improvement = 0 # always pruned
-    # (7) ⊂ (6)
+    # (8) ⊂ (7)
 
-    # (8) number of nodes with feasible relaxation,
+    # (9) number of nodes with feasible relaxation,
     # that have objective NOT dominated by best upper bound so far,
     # that are not feasible for the master problem,
     # and are therefore split on
     nodes_relax_feasible_split = 0 # not pruned
 
-    # (5) + (6) + (8) should yield (4)
-    # pruned nodes: (3) + (5) + (6)
-    # not pruned nodes: (8)
+    # (6) + (7) + (9) should yield (5)
+    # pruned nodes: (4) + (6) + (7)
+    # not pruned nodes: (9)
 
     while (
         now_gap > gap &&
@@ -275,18 +287,14 @@ function branchandbound_frob_matrixcomp(
                 (min_LB, min_LB_index) = findmin(node.LB for node in nodes)
                 current_node = popat!(nodes, min_LB_index)
             end
+            nodes_explored += 1
         else
-            now_gap = add_update!(
-                printlist, instance, node_id, counter, 
-                lower, upper, start_time,
-            )
             break
         end
 
         if branching_region == "box"
-            node_id = current_node.node_id
+            nothing
         elseif branching_region == "angular"
-            node_id = current_node.node_id
             # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
             U_ranges_results = φ_ranges_to_U_ranges(
                 current_node.φ_lower, 
@@ -296,7 +304,6 @@ function branchandbound_frob_matrixcomp(
             current_node.U_upper = U_ranges_results["U_upper"]
             solve_time_U_ranges += U_ranges_results["time_taken"]
         elseif branching_region == "polyhedral"
-            node_id = current_node.node_id
             polyhedra_results = φ_ranges_to_polyhedra(
                 current_node.φ_lower, 
                 current_node.φ_upper, 
@@ -307,7 +314,6 @@ function branchandbound_frob_matrixcomp(
         elseif branching_region == "hybrid"
             φ_lower = current_node.φ_lower
             φ_upper = current_node.φ_upper
-            node_id = current_node.node_id
             U_ranges_results = φ_ranges_to_U_ranges(
                 current_node.φ_lower, 
                 current_node.φ_upper,
@@ -413,15 +419,8 @@ function branchandbound_frob_matrixcomp(
             # end
             nodes_relax_feasible += 1
             objective_relax = relax_result["objective"]
-            lower_bounds[node_id] = objective_relax
-            Y_relax = relax_result["Y"]
-            U_relax = relax_result["U"]
-            t_relax = relax_result["t"]
-            X_relax = relax_result["X"]
-            Θ_relax = relax_result["Θ"]
-            if node_id == 1
-                lower = objective_relax
-            end
+            lower_bounds[current_node.node_id] = objective_relax
+            if current_node.node_id == 1
         end
 
         # if solution for relax_result has higher objective than best found so far: prune the node
@@ -444,8 +443,7 @@ function branchandbound_frob_matrixcomp(
                 solution["U"] = copy(U_relax)
                 solution["X"] = copy(X_relax)
                 now_gap = add_update!(
-                    printlist, instance, node_id, counter, 
-                    lower, upper, start_time,
+                    printlist, instance, nodes_explored, counter, lower, upper, start_time,
                 )
                 last_updated_counter = counter
             end
@@ -575,7 +573,7 @@ function branchandbound_frob_matrixcomp(
         "solve_time_relaxation" => solve_time_relaxation,
         "solve_time_U_ranges" => solve_time_U_ranges,
         "solve_time_polyhedra" => solve_time_polyhedra,
-        "nodes_explored" => node_id,
+        "nodes_explored" => nodes_explored,
         "nodes_total" => counter,
         "nodes_dominated" => nodes_dominated,
         "nodes_relax_infeasible" => nodes_relax_infeasible,
