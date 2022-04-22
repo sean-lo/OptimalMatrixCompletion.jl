@@ -562,6 +562,10 @@ function branchandbound_frob_matrixcomp(
                     branch_point == "midpoint"
                     ||
                     !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                    || # it's possible for φ_relax to be outside the ranges elementwise
+                    current_node.φ_lower[ind] > φ_relax[ind]
+                    ||
+                    φ_relax[ind] > current_node.φ_upper[ind]
                 )
                     diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
                     branch_val = current_node.φ_lower[ind] + diff / 2
