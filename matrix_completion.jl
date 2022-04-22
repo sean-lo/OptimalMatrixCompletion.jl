@@ -218,17 +218,7 @@ function branchandbound_frob_matrixcomp(
             LB = lower,
             parent_id = 0,
         )
-    elseif branching_region == "angular"
-        φ_lower_initial = zeros(n-1, k)
-        φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
-        initial_node = BBNode(
-            φ_lower = φ_lower_initial, 
-            φ_upper = φ_upper_initial, 
-            node_id = 1,
-            LB = lower,
-            parent_id = 0,
-        )
-    elseif branching_region in ["polyhedral", "hybrid"]
+    elseif branching_region in ["angular", "polyhedral", "hybrid"]
         φ_lower_initial = zeros(n-1, k)
         φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
         initial_node = BBNode(
@@ -300,7 +290,7 @@ function branchandbound_frob_matrixcomp(
                     nodes, 
                     length(nodes) + 1 - min_LB_index,
                 )
-            elseif node_selection == "depthfirst"
+            elseif node_selection == "depthfirst" # NOTE: may not work well
                 current_node = pop!(nodes)
             elseif node_selection == "sdp_relax_eigen"
                 # might only work well with box branching - which has some issues already
@@ -344,7 +334,7 @@ function branchandbound_frob_matrixcomp(
             polyhedra_results = φ_ranges_to_polyhedra(
                 current_node.φ_lower, 
                 current_node.φ_upper, 
-                false,
+                true,
             )
             polyhedra = polyhedra_results["polyhedra"]
             solve_time_polyhedra += polyhedra_results["time_taken"]
@@ -419,9 +409,9 @@ function branchandbound_frob_matrixcomp(
                 lower_bounds[current_node.node_id] = objective_relax
                 Y_relax = relax_result["Y"]
                 U_relax = relax_result["U"]
-                t_relax = relax_result["t"]
                 X_relax = relax_result["X"]
                 Θ_relax = relax_result["Θ"]
+                α_relax = relax_result["α"]
                 if current_node.node_id == 1
                     lower = objective_relax
                 end
@@ -438,7 +428,7 @@ function branchandbound_frob_matrixcomp(
         # prune this node;
         # if it is the best found so far, update solution
         if split_flag
-            if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, t_relax, X_relax, Θ_relax)
+            if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, X_relax, Θ_relax)
                 nodes_master_feasible += 1
                 # if best found so far, update solution
                 if objective_relax < solution["objective"]
@@ -455,6 +445,12 @@ function branchandbound_frob_matrixcomp(
                 end
                 split_flag = false
             end
+        end
+
+        if current_node.node_id % 1000 < 3
+            println(current_node.node_id)
+            println(current_node.U_upper)
+            println(current_node.U_lower)
         end
 
         if split_flag
@@ -479,20 +475,16 @@ function branchandbound_frob_matrixcomp(
                         )
                     )
                 elseif branching_type == "gradient"
-                    deriv_U = ( - γ 
-                        * relax_result["α"]  # (n, m)
-                        * relax_result["α"]' # (m, n)
-                        * relax_result["U"]  # (n, k)
-                    ) # shape: (n, k)
+                    deriv_U = - γ * α_relax * α_relax' * U_relax # shape: (n, k)
                     deriv_U_change = zeros(n,k)
                     for i in 1:n, j in 1:k
                         if deriv_U[i,j] < 0.0
                             deriv_U_change[i,j] = deriv_U[i,j] * (
-                                current_node.U_upper[i,j] - relax_result["U"][i,j]
+                                current_node.U_upper[i,j] - U_relax[i,j]
                             )
                         else
                             deriv_U_change[i,j] = deriv_U[i,j] * (
-                                current_node.U_lower[i,j] - relax_result["U"][i,j]
+                                current_node.U_lower[i,j] - U_relax[i,j]
                             )
                         end
                     end
@@ -507,7 +499,7 @@ function branchandbound_frob_matrixcomp(
                     diff = current_node.U_upper[ind] - current_node.U_lower[ind]
                     branch_val = current_node.U_lower[ind] + diff / 2
                 elseif branch_point == "current_point"
-                    branch_val = relax_result["U"][ind]
+                    branch_val = U_relax[ind]
                 end
                 # constructing child nodes
                 U_lower_left = current_node.U_lower
@@ -535,7 +527,7 @@ function branchandbound_frob_matrixcomp(
             elseif branching_region in ["angular", "polyhedral", "hybrid"]
                 φ_relax = zeros(n-1, k)
                 for j in 1:k
-                    φ_relax[:,j] = U_col_to_φ_col(relax_result["U"][:,j])
+                    φ_relax[:,j] = U_col_to_φ_col(U_relax[:,j])
                 end
                 # finding coordinates (i, j) to branch on
                 if (
@@ -549,11 +541,7 @@ function branchandbound_frob_matrixcomp(
                     Branching type "box" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
                     """)
                 elseif branching_type == "gradient"
-                    deriv_U = ( - γ 
-                        * relax_result["α"]  # (n, m)
-                        * relax_result["α"]' # (m, n)
-                        * relax_result["U"]  # (n, k)
-                    ) # shape: (n, k)
+                    deriv_U = - γ * α_relax * α_relax' * U_relax # shape: (n, k)
                     deriv_φ = zeros(n-1, k)
                     for j in 1:k
                         deriv_φ[:,j] = compute_jacobian(φ_relax[:,j])' * deriv_U[:,j]
@@ -739,7 +727,6 @@ end
 function master_problem_frob_matrixcomp_feasible(
     Y, 
     U, 
-    t, 
     X, 
     Θ,
     ;
@@ -1727,10 +1714,8 @@ function φ_ranges_to_polyhedra(
         if isapprox(maximum(ϕ2 - ϕ1), pi, atol = 1e-14)
             return nothing
         end
-        # TODO: explore more knots
-        knot = angles_to_vector((ϕ1 + ϕ2) / 2) 
         p = @suppress angles_to_halfspace(ϕ1, ϕ2)
-        return p ∩ HalfSpace(knot, 1)
+        return hrep([p])
     end
     
     if !(
