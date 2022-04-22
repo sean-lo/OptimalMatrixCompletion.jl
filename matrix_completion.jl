@@ -462,8 +462,14 @@ function branchandbound_frob_matrixcomp(
             # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
             nodes_relax_feasible_split += 1
             if branching_region == "box"
+                # preliminaries: defaulting to branching_type 
+
                 # finding coordinates (i, j) to branch on
-                if branching_type == "lexicographic"
+                if (
+                    branching_type == "lexicographic"
+                    ||
+                    !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                )
                     (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
                 elseif branching_type == "bounds"
                     (_, ind) = findmin(
@@ -493,7 +499,11 @@ function branchandbound_frob_matrixcomp(
                     (_, ind) = findmin(deriv_U_change)
                 end
                 # finding branch_val
-                if branch_point == "midpoint"
+                if (
+                    branch_point == "midpoint"
+                    ||
+                    !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                )
                     diff = current_node.U_upper[ind] - current_node.U_lower[ind]
                     branch_val = current_node.U_lower[ind] + diff / 2
                 elseif branch_point == "current_point"
@@ -528,7 +538,11 @@ function branchandbound_frob_matrixcomp(
                     φ_relax[:,j] = U_col_to_φ_col(relax_result["U"][:,j])
                 end
                 # finding coordinates (i, j) to branch on
-                if branching_type == "lexicographic"
+                if (
+                    branching_type == "lexicographic"
+                    ||
+                    !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                )
                     (_, ind) = findmax(current_node.φ_upper - current_node.φ_lower)
                 elseif branching_type == "bounds" # TODO: INCOMPLETE
                     error("""
@@ -559,7 +573,11 @@ function branchandbound_frob_matrixcomp(
                     (_, ind) = findmin(deriv_φ_change)
                 end
                 # finding branch_val
-                if branch_point == "midpoint"
+                if (
+                    branch_point == "midpoint"
+                    ||
+                    !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                )
                     diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
                     branch_val = current_node.φ_lower[ind] + diff / 2
                 elseif branch_point == "current_point"
