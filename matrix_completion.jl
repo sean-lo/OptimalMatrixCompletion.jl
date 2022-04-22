@@ -150,6 +150,7 @@ function branchandbound_frob_matrixcomp(
         "relaxation" => relaxation,
         "branching_region" => branching_region,
         "branching_type" => branching_type,
+        "branch_point" => branch_point,
         "node_selection" => node_selection,
         "optimality_gap" => gap,
         "max_steps" => max_steps,
@@ -158,8 +159,8 @@ function branchandbound_frob_matrixcomp(
     instance["run_log"] = DataFrame(
         explored = Int[],
         total = Int[],
-        objective = Float64[],
-        incumbent = Float64[],
+        lower = Float64[],
+        upper = Float64[],
         gap = Float64[],
         runtime = Float64[],
     )
@@ -203,6 +204,8 @@ function branchandbound_frob_matrixcomp(
         "U" => U_initial,
         "X" => X_initial,
     )
+
+    ranges = []
 
     nodes = []
     upper = objective_initial
@@ -447,12 +450,6 @@ function branchandbound_frob_matrixcomp(
             end
         end
 
-        if current_node.node_id % 1000 < 3
-            println(current_node.node_id)
-            println(current_node.U_upper)
-            println(current_node.U_lower)
-        end
-
         if split_flag
             # branch on variable
             # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
@@ -637,6 +634,20 @@ function branchandbound_frob_matrixcomp(
                     lower, upper, start_time,
                 )
                 last_updated_counter = counter
+
+                item = [
+                    current_node.node_id,
+                    current_node.U_lower,
+                    current_node.U_upper,
+                ]
+                if branching_region != "box"
+                    push!(
+                        item, 
+                        current_node.φ_lower, 
+                        current_node.φ_upper,
+                    )
+                end
+                push!(ranges, item)
                 if root_only
                     break
                 end
@@ -694,8 +705,28 @@ function branchandbound_frob_matrixcomp(
         push!(printlist, note)
     end
 
+    for item in ranges
+        push!(
+            printlist,
+            Printf.@sprintf("\n\nnode_id: %10d\n", item[1]),
+            "\nU_lower:\n",
+            sprint(show, "text/plain", item[2]),
+            "\nU_upper:\n",
+            sprint(show, "text/plain", item[3]),
+        )
+        if branching_region != "box"
+            push!(
+                printlist,
+                "\nφ_lower:\n",
+                sprint(show, "text/plain", item[4]),
+                "\nφ_upper:\n",
+                sprint(show, "text/plain", item[5]),
+            )
+        end
+    end
     push!(
         printlist,
+        "\n--------------------------------\n",
         "\n\nInitial solution (warm start):\n",
         sprint(show, "text/plain", objective_initial),
         "\n\nMSE of sampled entries (warm start):\n",
@@ -1453,6 +1484,7 @@ function φ_ranges_to_U_ranges(
             Input value φ_L must be in range [0, π];
             Input value φ_U must be in range [0, π];
             φ_L and φ_U must satisfy φ_L ≤ φ_U.
+            φ_L = $φ_L, φ_U = $φ_U.
             """)
         end
         return [cos(φ_U), cos(φ_L)]
@@ -1470,6 +1502,7 @@ function φ_ranges_to_U_ranges(
             Input value φ_L must be in range [0, π];
             Input value φ_U must be in range [0, π];
             φ_L and φ_U must satisfy φ_L ≤ φ_U.
+            φ_L = $φ_L, φ_U = $φ_U.
             """)
         end
         if φ_U ≤ pi / 2
