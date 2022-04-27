@@ -1336,6 +1336,7 @@ function alternating_minimization(
     ϵ::Float64 = 1e-10,
     max_iters::Int = 10000,
 )
+    # TODO: make the models in the main function body
     function minimize_U(
         W_current,
     )
@@ -1396,6 +1397,7 @@ function alternating_minimization(
         end
     end
 
+    # set U to the cholesky decomposition of Y_rounded
     U_current, S_current, V_current = svd(A_initial)
     W_current = Diagonal(vcat(S_current[1:k], repeat([0], m-k))) * V_current' 
 
