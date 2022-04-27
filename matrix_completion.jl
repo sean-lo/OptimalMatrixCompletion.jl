@@ -464,11 +464,13 @@ function branchandbound_frob_matrixcomp(
                     !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
                 )
                     (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
-                elseif branching_type == "bounds"
-                    (_, ind) = findmin(
+                elseif branching_type == "bounds" # TODO: UNTESTED
+                    (_, ind) = findmax(
                         min.(
-                            abs.(current_node.U_upper - U_relax),
-                            abs.(current_node.U_lower - U_relax),
+                            current_node.U_upper - U_relax,
+                            U_relax - current_node.U_lower,
+                        ) ./ (
+                            current_node.U_upper - current_node.U_lower
                         )
                     )
                 elseif branching_type == "gradient"
@@ -533,10 +535,19 @@ function branchandbound_frob_matrixcomp(
                     !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
                 )
                     (_, ind) = findmax(current_node.φ_upper - current_node.φ_lower)
-                elseif branching_type == "bounds" # TODO: INCOMPLETE
-                    error("""
-                    Branching type "box" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
-                    """)
+                elseif branching_type == "bounds" # TODO: UNTESTED
+                    # error("""
+                    # Branching type "box" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
+                    # """)
+                    (_, ind) = findmax(
+                        min.(
+                            # WARNING: it's possible for φ_relax to be outside the ranges elementwise
+                            abs.(current_node.φ_upper - φ_relax),
+                            abs.(φ_relax - current_node.φ_lower),
+                        ) ./ (
+                            current_node.φ_upper - current_node.φ_lower
+                        )
+                    )
                 elseif branching_type == "gradient"
                     deriv_U = - γ * α_relax * α_relax' * U_relax # shape: (n, k)
                     deriv_φ = zeros(n-1, k)
