@@ -218,9 +218,17 @@ function test_alternating_minimization(
     max_iters::Int = 10000,
 )
     (A, indices) = generate_matrixcomp_data(k, m, n, n_indices, seed)
+    altmin_A_initial = zeros(size(A))
+    for i in 1:n, j in 1:m
+        if indices[i,j] == 1
+            altmin_A_initial[i,j] = A[i,j]
+        end
+    end
+    altmin_U_initial, _, _ = svd(altmin_A_initial)
 
     return alternating_minimization(
-        A, k, indices, γ, λ;
+        A, n, k, indices, γ, λ;
+        U_initial = altmin_U_initial,
         ϵ = ϵ, max_iters = max_iters,
     )
 end
@@ -293,6 +301,7 @@ function test_branchandbound_frob_matrixcomp(
     branch_point::String = "midpoint",
     node_selection::String = "breadthfirst",
     root_only::Bool = false,
+    altmin_flag::Bool = true,
     max_steps::Int = 10000,
     time_limit::Int = 3600,
     with_log::Bool = true,
@@ -346,6 +355,7 @@ function test_branchandbound_frob_matrixcomp(
         branch_point = branch_point,
         node_selection = node_selection,
         root_only = root_only,
+        altmin_flag = altmin_flag,
         max_steps = max_steps,
         time_limit = time_limit,
     )

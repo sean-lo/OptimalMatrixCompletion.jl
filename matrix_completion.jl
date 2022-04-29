@@ -40,6 +40,7 @@ function branchandbound_frob_matrixcomp(
     node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
     root_only::Bool = false, # if true, only solves relaxation at root node
+    altmin_flag::Bool = true,
     max_steps::Int = 1000000,
     time_limit::Int = 3600, # time limit in seconds
     update_step::Int = 1000,
@@ -49,11 +50,13 @@ function branchandbound_frob_matrixcomp(
     function add_update!(
         printlist, instance, nodes_explored, counter, 
         lower, upper, start_time,
+        ;
+        altmin_flag::Bool = false
     )
         now_gap = (upper / lower) - 1
         current_time_elapsed = time() - start_time
         message = Printf.@sprintf(
-            "| %10d | %10d | %10f | %10f | %10f | %10.3f  s  |\n",
+            "| %10d | %10d | %10f | %10f | %10f | %10.3f  s  |",
             nodes_explored, # Explored
             counter, # Total
             lower, # Objective
@@ -61,6 +64,11 @@ function branchandbound_frob_matrixcomp(
             now_gap, # Gap
             current_time_elapsed, # Runtime
         )
+        if altmin_flag
+            message *= " - A\n"
+        else
+            message *= "\n"
+        end
         print(stdout, message)
         push!(printlist, message)
         push!(
@@ -173,16 +181,23 @@ function branchandbound_frob_matrixcomp(
     solve_time_polyhedra = 0.0
 
     # TODO: better initial Us?
+    altmin_A_initial = zeros(n, m)
+    for i in 1:n, j in 1:m
+        if indices[i,j] == 1
+            altmin_A_initial[i,j] = A[i,j]
+        end
+    end
+    altmin_U_initial, _, _ = svd(altmin_A_initial)
+
     altmin_results = @suppress alternating_minimization(
-        A, k, indices, γ, λ,
+        A, n, k, indices, γ, λ,
+        ;
+        U_initial = altmin_U_initial,
     )
-    U_altmin = altmin_results["U"]
-    V_altmin = altmin_results["V"]
     solve_time_altmin = altmin_results["solve_time"]
     # do a re-SVD on U * V in order to recover orthonormal U
-    X_initial = U_altmin * V_altmin
-    U_initial, S_initial, V_initial = svd(X_initial) # TODO: implement truncated SVD
-    U_initial = U_initial[:,1:k]
+    X_initial = altmin_results["U"] * altmin_results["V"]
+    U_initial = svd(X_initial).U[:,1:k]
     Y_initial = U_initial * U_initial'
     objective_initial = objective_function(
         X_initial, A, indices, U_initial, γ, λ,
@@ -447,6 +462,48 @@ function branchandbound_frob_matrixcomp(
                     last_updated_counter = counter
                 end
                 split_flag = false
+            end
+        end
+
+        # perform alternating minimization heuristic
+        altmin_flag_now = altmin_flag && (rand() > 0.95)
+        if split_flag
+            if altmin_flag_now
+                # TODO: check if it's not extremely close to projs already
+                # round Y, obtaining a Y_rounded
+                U_rounded = cholesky(relax_result["Y"]).U[1:k, 1:n]'
+                Y_rounded = U_rounded * U_rounded'
+                altmin_results_BB = @suppress alternating_minimization(
+                    A, n, k, indices, γ, λ;
+                    U_initial = Matrix(U_rounded),
+                )
+
+                solve_time_altmin += altmin_results_BB["solve_time"]
+                X_local = altmin_results_BB["U"] * altmin_results_BB["V"]
+                U_local = svd(X_local).U[:,1:k] 
+                # no guarantees that this will be within U_lower and U_upper
+                Y_local = U_local * U_local'
+                # guaranteed to be a projection matrix since U_local is a svd result
+                
+                objective_local = objective_function(
+                    X_local, A, indices, U_local, γ, λ,
+                )
+
+                if objective_local < solution["objective"]
+                    # TODO: include a counter here
+                    solution["objective"] = objective_local
+                    upper = objective_local
+                    solution["Y"] = copy(Y_local)
+                    solution["U"] = copy(U_local)
+                    solution["X"] = copy(X_local)
+                    now_gap = add_update!(
+                        printlist, instance, nodes_explored, counter, lower, upper, start_time,
+                        ; 
+                        altmin_flag = true,
+                    )
+                    last_updated_counter = counter
+                end
+
             end
         end
 
@@ -1328,94 +1385,91 @@ end
 
 function alternating_minimization(
     A::Array{Float64,2},
+    n::Int,
     k::Int,
     indices::Array{Float64,2},
     γ::Float64,
     λ::Float64,
     ;
+    U_initial::Matrix{Float64},
+    U_lower::Array{Float64,2} = begin
+        U_lower = -ones(n,k)
+        U_lower[end,:] .= 0.0
+        U_lower
+    end,
+    U_upper::Array{Float64,2} = ones(n,k),
     ϵ::Float64 = 1e-10,
     max_iters::Int = 10000,
 )
     # TODO: make the models in the main function body
-    function minimize_U(
-        W_current,
-    )
-        model = Model(Gurobi.Optimizer)
-        set_silent(model)
-        @variable(model, U[1:n, 1:m])
-        @objective(
-            model,
-            Min,
-            (1 / 2) * sum(
-                (
-                    sum(U[i,k] * W_current[k,j] for k in 1:m) 
-                    - A[i,j]
-                )^2 * indices[i,j]
-                for i in 1:n, j in 1:m
-            )
-            + (1 / (2 * γ)) * sum(
-                sum(U[i,k] * W_current[k,j] for k in 1:m)^2
-                for i in 1:n, j in 1:m
-            )
-        )
-        optimize!(model)
-        return value.(U), objective_value(model)
-    end
-
-    function minimize_W(
-        U_current,
-    )
-        model = Model(Gurobi.Optimizer)
-        set_silent(model)
-        @variable(model, W[1:m, 1:m])
-        @objective(
-            model,
-            Min,
-            (1 / 2) * sum(
-                (
-                    sum(U_current[i,k] * W[k,j] for k in 1:m) 
-                    - A[i,j]
-                )^2 * indices[i,j]
-                for i in 1:n, j in 1:m
-            )
-            + (1 / (2 * γ)) * sum(
-                sum(U_current[i,k] * W[k,j] for k in 1:m)^2
-                for i in 1:n, j in 1:m
-            )
-        )
-        optimize!(model)
-        return value.(W), objective_value(model)
-    end
 
     altmin_start_time = time()
 
     (n, m) = size(A)
-    A_initial = zeros(n, m)
-    for i in 1:n, j in 1:m
-        if indices[i,j] == 1
-            A_initial[i,j] = A[i,j]
-        end
-    end
-
-    # set U to the cholesky decomposition of Y_rounded
-    U_current, S_current, V_current = svd(A_initial)
-    W_current = Diagonal(vcat(S_current[1:k], repeat([0], m-k))) * V_current' 
+        
+    U_current = U_initial
 
     counter = 0
     objective_current = 1e10
 
+    model_U = Model(Gurobi.Optimizer)
+    set_silent(model_U)
+    @variable(model_U, U[1:n, 1:k])
+    @constraint(model_U, U .≤ U_upper)
+    @constraint(model_U, U .≥ U_lower)
+    
+    model_V = Model(Gurobi.Optimizer)
+    set_silent(model_V)
+    @variable(model_V, V[1:k, 1:m])
+
     while counter < max_iters
         counter += 1
-        global U_new, _ = minimize_U(W_current)
-        global W_new, objective_new = minimize_W(U_new)
+        # Optimize over V, given U 
+        @objective(
+            model_V,
+            Min,
+            (1 / 2) * sum(
+                (
+                    sum(U_current[i,ind] * V[ind,j] for ind in 1:k) 
+                    - A[i,j]
+                )^2 * indices[i,j]
+                for i in 1:n, j in 1:m
+            )
+            + (1 / (2 * γ)) * sum(
+                sum(U_current[i,ind] * V[ind,j] for ind in 1:k)^2
+                for i in 1:n, j in 1:m
+            )
+        )
+        optimize!(model_V)
+        global V_new = value.(model_V[:V])
+
+        # Optimize over U, given V 
+        @objective(
+            model_U,
+            Min,
+            (1 / 2) * sum(
+                (
+                    sum(U[i,ind] * V_new[ind,j] for ind in 1:k) 
+                    - A[i,j]
+                )^2 * indices[i,j]
+                for i in 1:n, j in 1:m
+            )
+            + (1 / (2 * γ)) * sum(
+                sum(U[i,ind] * V_new[ind,j] for ind in 1:k)^2
+                for i in 1:n, j in 1:m
+            )
+        )
+        optimize!(model_U)
+        global U_new = value.(model_U[:U])
+
+        objective_new = objective_value(model_U)
+        
         objective_diff = abs(objective_new - objective_current)
-        # println(counter)
-        # println(objective_diff)
         if objective_diff < ϵ # objectives don't oscillate!
             break
         end
         U_current = U_new
-        W_current = W_new
+        V_current = V_new
         objective_current = objective_new
     end
 
@@ -1423,7 +1477,7 @@ function alternating_minimization(
 
     return Dict(
         "U" => U_new, 
-        "V" => W_new, 
+        "V" => V_new, 
         "solve_time" => (altmin_end_time - altmin_start_time),
     )
 end
