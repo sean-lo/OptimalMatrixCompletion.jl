@@ -522,7 +522,7 @@ function branchandbound_frob_matrixcomp(
                 )
                     (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
                 elseif branching_type == "bounds" # TODO: UNTESTED
-                    (_, ind) = findmax(
+                    (_, ind) = findmin(
                         min.(
                             current_node.U_upper - U_relax,
                             U_relax - current_node.U_lower,
@@ -547,11 +547,17 @@ function branchandbound_frob_matrixcomp(
                     (_, ind) = findmin(deriv_U_change)
                 end
                 # finding branch_val
-                if (
-                    branch_point == "midpoint"
-                    ||
-                    !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
-                )
+                if !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                    diff = current_node.U_upper[ind] - current_node.U_lower[ind]
+                    branch_val = current_node.U_lower[ind] + diff / 2
+                elseif branching_type == "bounds" # custom branch_point
+                    if (current_node.U_upper[ind] - U_relax[ind] < 
+                        U_relax[ind] - current_node.U_lower[ind])
+                        branch_val = U_relax[ind] - (current_node.U_upper[ind] - U_relax[ind])
+                    else
+                        branch_val = U_relax[ind] + (U_relax[ind] - current_node.U_lower[ind])
+                    end
+                elseif branch_point == "midpoint"
                     diff = current_node.U_upper[ind] - current_node.U_lower[ind]
                     branch_val = current_node.U_lower[ind] + diff / 2
                 elseif branch_point == "current_point"
