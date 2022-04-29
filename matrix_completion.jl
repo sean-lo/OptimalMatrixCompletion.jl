@@ -585,6 +585,12 @@ function branchandbound_frob_matrixcomp(
                 for j in 1:k
                     φ_relax[:,j] = U_col_to_φ_col(U_relax[:,j])
                 end
+                # if !all(current_node.φ_lower .≤ φ_relax .≤ current_node.φ_upper)
+                #     println(current_node.φ_lower)
+                #     println(φ_relax)
+                #     println(current_node.φ_upper)
+                #     error("""""")
+                # end
                 # finding coordinates (i, j) to branch on
                 if (
                     branching_type == "lexicographic"
@@ -596,11 +602,11 @@ function branchandbound_frob_matrixcomp(
                     # error("""
                     # Branching type "box" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
                     # """)
-                    (_, ind) = findmax(
+                    (_, ind) = findmin(
                         min.(
                             # WARNING: it's possible for φ_relax to be outside the ranges elementwise
-                            abs.(current_node.φ_upper - φ_relax),
-                            abs.(φ_relax - current_node.φ_lower),
+                            current_node.φ_upper - φ_relax,
+                            φ_relax - current_node.φ_lower,
                         ) ./ (
                             current_node.φ_upper - current_node.φ_lower
                         )
@@ -627,14 +633,22 @@ function branchandbound_frob_matrixcomp(
                 end
                 # finding branch_val
                 if (
-                    branch_point == "midpoint"
-                    ||
                     !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
                     || # it's possible for φ_relax to be outside the ranges elementwise
                     current_node.φ_lower[ind] > φ_relax[ind]
                     ||
                     φ_relax[ind] > current_node.φ_upper[ind]
                 )
+                    diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
+                    branch_val = current_node.φ_lower[ind] + diff / 2
+                elseif branching_type == "bounds"
+                    if (current_node.φ_upper[ind] - φ_relax[ind] < 
+                        φ_relax[ind] - current_node.φ_lower[ind])
+                        branch_val = φ_relax[ind] - (current_node.φ_upper[ind] - φ_relax[ind])
+                    else
+                        branch_val = φ_relax[ind] + (φ_relax[ind] - current_node.φ_lower[ind])
+                    end
+                elseif branch_point == "midpoint"
                     diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
                     branch_val = current_node.φ_lower[ind] + diff / 2
                 elseif branch_point == "current_point"
