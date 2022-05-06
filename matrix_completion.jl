@@ -385,7 +385,6 @@ function branchandbound_frob_matrixcomp(
                 relax_result = @suppress relax_frob_matrixcomp(
                     n, k, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
-                    matrix_cuts = matrix_cuts,
                 )
             elseif branching_region == "angular"
                 relax_result = @suppress relax_frob_matrixcomp(
