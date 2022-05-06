@@ -17,11 +17,11 @@ using MosekTools
 using Polyhedra
 
 @with_kw mutable struct BBNode
-    U_lower::Union{Matrix{Float64}, Missing} = missing
-    U_upper::Union{Matrix{Float64}, Missing} = missing
-    φ_lower::Union{Matrix{Float64}, Missing} = missing
-    φ_upper::Union{Matrix{Float64}, Missing} = missing
-    LB::Union{Float64, Missing} = missing
+    U_lower::Union{Matrix{Float64}, Nothing} = nothing
+    U_upper::Union{Matrix{Float64}, Nothing} = nothing
+    φ_lower::Union{Matrix{Float64}, Nothing} = nothing
+    φ_upper::Union{Matrix{Float64}, Nothing} = nothing
+    LB::Union{Float64, Nothing} = nothing
     node_id::Int
     parent_id::Int
 end
@@ -33,7 +33,6 @@ function branchandbound_frob_matrixcomp(
     γ::Float64,
     λ::Float64,
     ;
-    relaxation::String = "SDP", # type of relaxation to use; either "SDP" or "SOCP"
     branching_region::String = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
     branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
     branch_point::String = "midpoint", # determine which value to branch on: either "midpoint" or "current_point"
@@ -78,12 +77,6 @@ function branchandbound_frob_matrixcomp(
         return now_gap
     end
 
-    if !(relaxation in ["SDP", "SOCP"])
-        error("""
-        Invalid input for relaxation method.
-        Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
-        """)
-    end
     if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
         error("""
         Invalid input for branching region.
@@ -129,10 +122,9 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("num_indices:       %15d\n", sum(indices)),
         Printf.@sprintf("γ:                 %15g\n", γ),
         Printf.@sprintf("λ:                 %15g\n", λ),
-        Printf.@sprintf("Relaxation:        %15s\n", relaxation),
         Printf.@sprintf("Branching region:  %15s\n", branching_region),
         Printf.@sprintf("Branching type:    %15s\n", branching_type),
-        Printf.@sprintf("Branch point:      %15s\n", branch_point),
+        Printf.@sprintf("Branching point:   %15s\n", branch_point),
         Printf.@sprintf("Node selection:    %15s\n", node_selection),
         Printf.@sprintf("Optimality gap:    %15g\n", gap),
         Printf.@sprintf("Maximum nodes:     %15d\n", max_steps),
@@ -155,10 +147,7 @@ function branchandbound_frob_matrixcomp(
         "num_indices" => convert(Int, round(sum(indices))),
         "γ" => γ,
         "λ" => λ,
-        "relaxation" => relaxation,
         "branching_region" => branching_region,
-        "branching_type" => branching_type,
-        "branch_point" => branch_point,
         "node_selection" => node_selection,
         "optimality_gap" => gap,
         "max_steps" => max_steps,
@@ -310,10 +299,6 @@ function branchandbound_frob_matrixcomp(
                 )
             elseif node_selection == "depthfirst" # NOTE: may not work well
                 current_node = pop!(nodes)
-            elseif node_selection == "sdp_relax_eigen"
-                # might only work well with box branching - which has some issues already
-                # get eigenvalues of Y
-                nothing # TODO
             end
             nodes_explored += 1
         else
@@ -370,18 +355,18 @@ function branchandbound_frob_matrixcomp(
         if split_flag
             if branching_region in ["box", "angular"]
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, relaxation, branching_region;
+                    n, k, branching_region;
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                 )
             elseif branching_region == "polyhedral"
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, relaxation, branching_region;
+                    n, k, branching_region;
                     polyhedra = polyhedra,
                 )
             elseif branching_region == "hybrid"
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, relaxation, branching_region;
+                    n, k, branching_region;
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                     polyhedra = polyhedra,
@@ -396,18 +381,24 @@ function branchandbound_frob_matrixcomp(
 
         # solve SDP / SOCP relaxation of master problem
         if split_flag
-            if branching_region in ["box", "angular"]
+            if branching_region == "box"
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, relaxation, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
+                    n, k, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
+                    U_upper = current_node.U_upper,
+                    matrix_cuts = matrix_cuts,
+                )
+            elseif branching_region == "angular"
+                relax_result = @suppress relax_frob_matrixcomp(
+                    n, k, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                 )
             elseif branching_region == "polyhedral"
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, relaxation, branching_region, A, indices, γ, λ; polyhedra = polyhedra,
+                    n, k, branching_region, A, indices, γ, λ; polyhedra = polyhedra,
                 )
             elseif branching_region == "hybrid"
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, relaxation, branching_region, A, indices, γ, λ; 
+                    n, k, branching_region, A, indices, γ, λ; 
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper, 
                     polyhedra = polyhedra,
@@ -586,6 +577,10 @@ function branchandbound_frob_matrixcomp(
                     LB = objective_relax,
                     parent_id = current_node.node_id,
                 )
+                    push!(nodes, left_child_node, right_child_node)
+                    ancestry[current_node.node_id] = [counter + 1, counter + 2]
+                    counter += 2                    
+                end
             elseif branching_region in ["angular", "polyhedral", "hybrid"]
                 φ_relax = zeros(n-1, k)
                 for j in 1:k
@@ -683,10 +678,10 @@ function branchandbound_frob_matrixcomp(
                     LB = objective_relax,
                     parent_id = current_node.node_id,
                 )
+                push!(nodes, left_child_node, right_child_node)
+                ancestry[current_node.node_id] = [counter + 1, counter + 2]
+                counter += 2
             end
-            push!(nodes, left_child_node, right_child_node)
-            ancestry[current_node.node_id] = [counter + 1, counter + 2]
-            counter += 2
         end
 
         # cleanup actions - to be done regardless of whether split_flag was true or false
@@ -848,10 +843,10 @@ function branchandbound_frob_matrixcomp(
 end
 
 function master_problem_frob_matrixcomp_feasible(
-    Y, 
-    U, 
-    X, 
-    Θ,
+    Y::Matrix{Float64}, 
+    U::Matrix{Float64}, 
+    X::Matrix{Float64}, 
+    Θ::Matrix{Float64}, 
     ;
     orthogonality_tolerance::Float64 = 0.0, # previous value 1e-5
     projection_tolerance::Float64 = 0.0, # previous value 1e-6
@@ -868,7 +863,6 @@ end
 function relax_feasibility_frob_matrixcomp(
     n::Int,
     k::Int,
-    relaxation::String,
     branching_region::String,
     ;
     U_lower::Array{Float64,2} = begin
@@ -880,12 +874,6 @@ function relax_feasibility_frob_matrixcomp(
     polyhedra::Union{Vector, Nothing} = nothing,
     orthogonality_tolerance::Float64 = 0.0,
 )
-    if !(relaxation in ["SDP", "SOCP"])
-        error("""
-        Invalid input for relaxation method.
-        Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
-        """)
-    end
     if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
         error("""
         Invalid input for branching region.
@@ -912,17 +900,8 @@ function relax_feasibility_frob_matrixcomp(
 
     (n, k) = size(U_lower)
 
-    if relaxation == "SDP"
-        model = Model(Mosek.Optimizer)
-        set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
-    elseif relaxation == "SOCP"
-        model = Model(Gurobi.Optimizer)
-        set_optimizer_attribute(model, "OutputFlag", 0)
-    else
-        error("""
-        relaxation must be either "SDP" or "SOCP"!
-        """)
-    end
+    model = Model(Mosek.Optimizer)
+    set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
 
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
@@ -1035,7 +1014,6 @@ end
 function relax_frob_matrixcomp(
     n::Int,
     k::Int,
-    relaxation::String,
     branching_region::String,
     A::Array{Float64,2},
     indices::Array{Float64,2},
@@ -1075,12 +1053,6 @@ function relax_frob_matrixcomp(
         return α
     end
 
-    if !(relaxation in ["SDP", "SOCP"])
-        error("""
-        Invalid input for relaxation method.
-        Relaxation must be either "SDP" or "SOCP"; $relaxation supplied instead.
-        """)
-    end
     if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
         error("""
         Invalid input for branching region.
@@ -1109,14 +1081,9 @@ function relax_frob_matrixcomp(
     (n, k) = size(U_lower)
     (n, m) = size(A)
 
-    if relaxation == "SDP"
-        model = Model(Mosek.Optimizer)
-        if solver_output == 0
-            set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
-        end
-    elseif relaxation == "SOCP"
-        model = Model(Gurobi.Optimizer)
-        set_optimizer_attribute(model, "OutputFlag", solver_output)
+    model = Model(Mosek.Optimizer)
+    if solver_output == 0
+        set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     end
 
     @variable(model, X[1:n, 1:m])
@@ -1125,132 +1092,9 @@ function relax_frob_matrixcomp(
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
 
-    if relaxation == "SDP"
-        @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
-        @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
-
-        @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
-    elseif relaxation == "SOCP"
-        # Second-order cone constraints
-        # TODO: see if can improve these by knowledge on bounds on U
-
-        # # Y[i,j]^2 <= Y[i,i] * Y[j,j]
-        # @constraint(model, 
-        #     [i in 1:n, j in i:n],
-        #     [
-        #         Y[i,i]; 
-        #         0.5 * Y[j,j]; 
-        #         Y[i,j]
-        #     ] in RotatedSecondOrderCone()
-        # )
-        # || 2 * Y[i,j]; Y[i,i] - Y[j,j] ||₂ ≤ Y[i,i] + Y[j,j]
-        @constraint(model, 
-            [i in 1:n, j in i:n],
-            [
-                Y[i,i] + Y[j,j];
-                Y[i,i] - Y[j,j];
-                2 * Y[i,j]
-            ] in SecondOrderCone()
-        )
-
-        # # X[i,j]^2 <= Y[i,i] * Θ[j,j]
-        # @constraint(model, 
-        #     [i in 1:n, j in 1:m],
-        #     [
-        #         Y[i,i]; 
-        #         0.5 * Θ[j,j]; 
-        #         X[i,j]
-        #     ] in RotatedSecondOrderCone()
-        # )
-        # || 2 * X[i,j]; Y[i,i] - Θ[j,j] ||₂ ≤ Y[i,i] + Θ[j,j]
-        @constraint(model, 
-            [i in 1:n, j in 1:m],
-            [
-                Y[i,i] + Θ[j,j];
-                Y[i,i] - Θ[j,j];
-                2 * X[i,j]
-            ] in SecondOrderCone()
-        )
-        
-        # # Θ[i,j]^2 <= Θ[i,i] * Θ[j,j]
-        # @constraint(model, 
-        #     [i in 1:m, j in i:m],
-        #     [
-        #         Θ[i,i]; 
-        #         0.5 * Θ[j,j]; 
-        #         Θ[i,j]
-        #     ] in RotatedSecondOrderCone()
-        # )
-        # || 2 * Θ[i,j]; Θ[i,i] - Θ[j,j] ||₂ ≤ Θ[i,i] + Θ[j,j]
-        @constraint(model,
-            [i in 1:m, j in i:m],
-            [
-                Θ[i,i] + Θ[j,j];
-                Θ[i,i] - Θ[j,j];
-                2 * Θ[i,j]
-            ] in SecondOrderCone() 
-        )
-        
-        # # Y[i,i] >= sum(U[i,j]^2 for j in 1:k)
-        # @constraint(model, 
-        #     [i in 1:n],
-        #     [
-        #         Y[i,i]; 
-        #         0.5; 
-        #         U[i,:]
-        #     ] in RotatedSecondOrderCone()
-        # )
-        # || 2 * U[i,:]; Y[i,i] - 1 ||₂ ≤ Y[i,i] + 1
-        @constraint(model, 
-            [i in 1:n],
-            [
-                Y[i,i] + 1;
-                Y[i,i] - 1;
-                2 * U[i,:]
-            ] in SecondOrderCone()
-        )
-
-        # TODO: see if can improve these (McCormick-like) by knowledge on bounds on U
-        # (\alpha = +-1 currently but at other nodes? what is the current centerpoint of my box? if i linearize there do i get a better approx?)
-
-        # Adamturk and Gomez:
-        # # || U[i,:] + U[j,:] ||²₂ ≤ Y[i,i] + Y[j,j] + 2 * Y[i,j]
-        # @constraint(model, 
-        #     [i in 1:n, j in i:n],
-        #     [
-        #         Y[i,i] + Y[j,j] + 2 * Y[i,j];
-        #         0.5;
-        #         U[i,:] + U[j,:]
-        #     ] in RotatedSecondOrderCone()
-        # )
-        # # || U[i,:] - U[j,:] ||²₂ ≤ Y[i,i] + Y[j,j] - 2 * Y[i,j]
-        # @constraint(model, 
-        #     [i in 1:n, j in i:n],
-        #     [
-        #         Y[i,i] + Y[j,j] -+ 2 * Y[i,j];
-        #         0.5;
-        #         U[i,:] - U[j,:]
-        #     ] in RotatedSecondOrderCone()
-        # )
-        # || 2 * (U[i,:] + U[j,:]); Y[i,i] + Y[j,j] + 2 * Y[i,j] - 1 ||₂ ≤ Y[i,i] + Y[j,j] + 2 * Y[i,j] + 1
-        @constraint(model, 
-            [i in 1:n, j in i:n],
-            [
-                Y[i,i] + Y[j,j] + 2 * Y[i,j] + 1;
-                Y[i,i] + Y[j,j] + 2 * Y[i,j] - 1;
-                2 * (U[i,:] + U[j,:])
-            ] in SecondOrderCone()
-        )
-        # || 2 * (U[i,:] + U[j,:]); Y[i,i] + Y[j,j] - 2 * Y[i,j] - 1 ||₂ ≤ Y[i,i] + Y[j,j] - 2 * Y[i,j] + 1
-        @constraint(model, 
-            [i in 1:n, j in i:n],
-            [
-                Y[i,i] + Y[j,j] - 2 * Y[i,j] + 1;
-                Y[i,i] + Y[j,j] - 2 * Y[i,j] - 1;
-                2 * (U[i,:] - U[j,:])
-            ] in SecondOrderCone()
-        )
-    end
+    @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
+    @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
+    @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
 
     # Trace constraint on Y
     @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
@@ -1371,7 +1215,6 @@ function relax_frob_matrixcomp(
         results["α"] = compute_α(value.(Y), γ, A, indices)
         results["Y"] = value.(Y)
         results["U"] = value.(U)
-        results["t"] = value.(t)
         results["X"] = value.(X)
         results["Θ"] = value.(Θ)
     elseif JuMP.termination_status(model) in [
@@ -1388,7 +1231,6 @@ function relax_frob_matrixcomp(
             results["α"] = compute_α(value.(Y), γ, A, indices)
             results["Y"] = value.(Y)
             results["U"] = value.(U)
-            results["t"] = value.(t)
             results["X"] = value.(X)
             results["Θ"] = value.(Θ)
         else
