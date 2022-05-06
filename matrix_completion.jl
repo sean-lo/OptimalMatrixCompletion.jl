@@ -1300,7 +1300,6 @@ function relax_frob_matrixcomp(
         results["α"] = compute_α(value.(Y), γ, A, indices)
         results["Y"] = value.(Y)
         results["U"] = value.(U)
-        results["t"] = value.(t)
         results["X"] = value.(X)
         results["Θ"] = value.(Θ)
     elseif JuMP.termination_status(model) in [
@@ -1317,7 +1316,6 @@ function relax_frob_matrixcomp(
             results["α"] = compute_α(value.(Y), γ, A, indices)
             results["Y"] = value.(Y)
             results["U"] = value.(U)
-            results["t"] = value.(t)
             results["X"] = value.(X)
             results["Θ"] = value.(Θ)
         else
