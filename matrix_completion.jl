@@ -480,6 +480,8 @@ function branchandbound_frob_matrixcomp(
                 altmin_results_BB = @suppress alternating_minimization(
                     A, n, k, indices, γ, λ;
                     U_initial = Matrix(U_rounded),
+                    U_lower = current_node.U_lower,
+                    U_upper = current_node.U_upper,
                 )
 
                 solve_time_altmin += altmin_results_BB["solve_time"]
