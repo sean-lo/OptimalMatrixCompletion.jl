@@ -1737,6 +1737,12 @@ function φ_ranges_to_polyhedra(
         @constraint(model, sum(c) == 1)
         @objective(model, Min, Compat.dot(c, f_lite[1]))
         optimize!(model)
+        if termination_status(model) != OPTIMAL
+            error("""
+            Model not optimal!
+            $(model)
+            """)
+        end
         c = value.(c)
         b = objective_value(model)
         if b < 0
