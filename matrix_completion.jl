@@ -21,6 +21,7 @@ using Polyhedra
     U_upper::Union{Matrix{Float64}, Nothing} = nothing
     φ_lower::Union{Matrix{Float64}, Nothing} = nothing
     φ_upper::Union{Matrix{Float64}, Nothing} = nothing
+    matrix_cuts::Union{Vector{Tuple}, Nothing} = nothing
     LB::Union{Float64, Nothing} = nothing
     node_id::Int
     parent_id::Int
@@ -38,6 +39,7 @@ function branchandbound_frob_matrixcomp(
     branch_point::String = "midpoint", # determine which value to branch on: either "midpoint" or "current_point"
     node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst"
     gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
+    use_matrix_cuts::Bool = true,
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     max_steps::Int = 1000000,
@@ -109,8 +111,9 @@ function branchandbound_frob_matrixcomp(
         Input matrix indices must have size (n, m).
         """)
     end
-
+    
     log_time = Dates.now()
+    Random.seed!(0)
 
     (n, m) = size(A)
     printlist = [
@@ -126,6 +129,7 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("Branching type:    %15s\n", branching_type),
         Printf.@sprintf("Branching point:   %15s\n", branch_point),
         Printf.@sprintf("Node selection:    %15s\n", node_selection),
+        Printf.@sprintf("Use matrix cuts?:  %15s\n", use_matrix_cuts),
         Printf.@sprintf("Optimality gap:    %15g\n", gap),
         Printf.@sprintf("Maximum nodes:     %15d\n", max_steps),
         Printf.@sprintf("Time limit (s):    %15d\n", time_limit),
@@ -149,6 +153,7 @@ function branchandbound_frob_matrixcomp(
         "λ" => λ,
         "branching_region" => branching_region,
         "node_selection" => node_selection,
+        "use_matrix_cuts" => use_matrix_cuts,
         "optimality_gap" => gap,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
@@ -221,6 +226,7 @@ function branchandbound_frob_matrixcomp(
         initial_node = BBNode(
             U_lower = U_lower_initial, 
             U_upper = U_upper_initial, 
+            matrix_cuts = [],
             node_id = 1,
             LB = lower,
             parent_id = 0,
@@ -352,7 +358,7 @@ function branchandbound_frob_matrixcomp(
             nodes_dominated += 1
         end
 
-        if split_flag
+        if !use_matrix_cuts && split_flag
             if branching_region in ["box", "angular"]
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
                     n, k, branching_region;
@@ -379,21 +385,29 @@ function branchandbound_frob_matrixcomp(
             end
         end
 
-        # solve SDP / SOCP relaxation of master problem
+        # solve SDP relaxation of master problem
         if split_flag
+            matrix_cuts = nothing
+            if use_matrix_cuts
+                matrix_cuts = current_node.matrix_cuts
+            end               
             if branching_region == "box"
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
+                    n, k, branching_region, A, indices, γ, λ; 
+                    U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
+                    matrix_cuts = matrix_cuts,
                 )
             elseif branching_region == "angular"
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, branching_region, A, indices, γ, λ; U_lower = current_node.U_lower, 
+                    n, k, branching_region, A, indices, γ, λ; 
+                    U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                 )
             elseif branching_region == "polyhedral"
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, branching_region, A, indices, γ, λ; polyhedra = polyhedra,
+                    n, k, branching_region, A, indices, γ, λ; 
+                    polyhedra = polyhedra,
                 )
             elseif branching_region == "hybrid"
                 relax_result = @suppress relax_frob_matrixcomp(
@@ -436,7 +450,7 @@ function branchandbound_frob_matrixcomp(
         # prune this node;
         # if it is the best found so far, update solution
         if split_flag
-            if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, X_relax, Θ_relax)
+            if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, X_relax, Θ_relax, use_matrix_cuts)
                 nodes_master_feasible += 1
                 # if best found so far, update solution
                 if objective_relax < solution["objective"]
@@ -502,83 +516,96 @@ function branchandbound_frob_matrixcomp(
             # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
             nodes_relax_feasible_split += 1
             if branching_region == "box"
-                # preliminaries: defaulting to branching_type 
-
-                # finding coordinates (i, j) to branch on
-                if (
-                    branching_type == "lexicographic"
-                    ||
-                    !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
-                )
-                    (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
-                elseif branching_type == "bounds" # TODO: UNTESTED
-                    (_, ind) = findmin(
-                        min.(
-                            current_node.U_upper - U_relax,
-                            U_relax - current_node.U_lower,
-                        ) ./ (
-                            current_node.U_upper - current_node.U_lower
-                        )
+                if use_matrix_cuts
+                    append!(nodes, 
+                        collect(create_matrix_cut_child_nodes(
+                            Y_relax, U_relax,
+                            current_node.U_lower, current_node.U_upper,
+                            current_node.matrix_cuts,
+                            counter, current_node.node_id, 
+                            objective_relax,
+                        ))
                     )
-                elseif branching_type == "gradient"
-                    deriv_U = - γ * α_relax * α_relax' * U_relax # shape: (n, k)
-                    deriv_U_change = zeros(n,k)
-                    for i in 1:n, j in 1:k
-                        if deriv_U[i,j] < 0.0
-                            deriv_U_change[i,j] = deriv_U[i,j] * (
-                                current_node.U_upper[i,j] - U_relax[i,j]
+                    ancestry[current_node.node_id] = [counter + i for i in 1:2^k]
+                    counter += 2^k
+                else
+                    # preliminaries: defaulting to branching_type
+                    
+                    # finding coordinates (i, j) to branch on
+                    if (
+                        branching_type == "lexicographic"
+                        ||
+                        !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                    )
+                        (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
+                    elseif branching_type == "bounds" # TODO: UNTESTED
+                        (_, ind) = findmin(
+                            min.(
+                                current_node.U_upper - U_relax,
+                                U_relax - current_node.U_lower,
+                            ) ./ (
+                                current_node.U_upper - current_node.U_lower
                             )
-                        else
-                            deriv_U_change[i,j] = deriv_U[i,j] * (
-                                current_node.U_lower[i,j] - U_relax[i,j]
-                            )
+                        )
+                    elseif branching_type == "gradient"
+                        deriv_U = - γ * α_relax * α_relax' * U_relax # shape: (n, k)
+                        deriv_U_change = zeros(n,k)
+                        for i in 1:n, j in 1:k
+                            if deriv_U[i,j] < 0.0
+                                deriv_U_change[i,j] = deriv_U[i,j] * (
+                                    current_node.U_upper[i,j] - U_relax[i,j]
+                                )
+                            else
+                                deriv_U_change[i,j] = deriv_U[i,j] * (
+                                    current_node.U_lower[i,j] - U_relax[i,j]
+                                )
+                            end
                         end
+                        (_, ind) = findmin(deriv_U_change)
                     end
-                    (_, ind) = findmin(deriv_U_change)
-                end
-                # finding branch_val
-                if !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
-                    diff = current_node.U_upper[ind] - current_node.U_lower[ind]
-                    branch_val = current_node.U_lower[ind] + diff / 2
-                elseif branching_type == "bounds" # custom branch_point
-                    if (current_node.U_upper[ind] - U_relax[ind] < 
-                        U_relax[ind] - current_node.U_lower[ind])
-                        branch_val = U_relax[ind] - (current_node.U_upper[ind] - U_relax[ind])
-                    else
-                        branch_val = U_relax[ind] + (U_relax[ind] - current_node.U_lower[ind])
+                    # finding branch_val
+                    if !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                        diff = current_node.U_upper[ind] - current_node.U_lower[ind]
+                        branch_val = current_node.U_lower[ind] + diff / 2
+                    elseif branching_type == "bounds" # custom branch_point
+                        if (current_node.U_upper[ind] - U_relax[ind] <
+                            U_relax[ind] - current_node.U_lower[ind])
+                            branch_val = U_relax[ind] - (current_node.U_upper[ind] - U_relax[ind])
+                        else
+                            branch_val = U_relax[ind] + (U_relax[ind] - current_node.U_lower[ind])
+                        end
+                    elseif branch_point == "midpoint"
+                        diff = current_node.U_upper[ind] - current_node.U_lower[ind]
+                        branch_val = current_node.U_lower[ind] + diff / 2
+                    elseif branch_point == "current_point"
+                        branch_val = U_relax[ind]
                     end
-                elseif branch_point == "midpoint"
-                    diff = current_node.U_upper[ind] - current_node.U_lower[ind]
-                    branch_val = current_node.U_lower[ind] + diff / 2
-                elseif branch_point == "current_point"
-                    branch_val = U_relax[ind]
-                end
-                # constructing child nodes
-                U_lower_left = current_node.U_lower
-                U_upper_left = copy(current_node.U_upper)
-                U_upper_left[ind] = branch_val
-                U_lower_right = copy(current_node.U_lower)
-                U_lower_right[ind] = branch_val
-                U_upper_right = current_node.U_upper
-                left_child_node = BBNode(
-                    U_lower = U_lower_left,
-                    U_upper = U_upper_left,
-                    node_id = counter + 1,
-                    # initialize a node's LB with the objective of relaxation of parent
-                    LB = objective_relax, 
-                    parent_id = current_node.node_id,
-                )
-                right_child_node = BBNode(
-                    U_lower = U_lower_right,
-                    U_upper = U_upper_right,
-                    node_id = counter + 2,
-                    # initialize a node's LB with the objective of relaxation of parent
-                    LB = objective_relax,
-                    parent_id = current_node.node_id,
-                )
+                    # constructing child nodes
+                    U_lower_left = current_node.U_lower
+                    U_upper_left = copy(current_node.U_upper)
+                    U_upper_left[ind] = branch_val
+                    U_lower_right = copy(current_node.U_lower)
+                    U_lower_right[ind] = branch_val
+                    U_upper_right = current_node.U_upper
+                    left_child_node = BBNode(
+                        U_lower = U_lower_left,
+                        U_upper = U_upper_left,
+                        node_id = counter + 1,
+                        # initialize a node's LB with the objective of relaxation of parent
+                        LB = objective_relax,
+                        parent_id = current_node.node_id,
+                    )
+                    right_child_node = BBNode(
+                        U_lower = U_lower_right,
+                        U_upper = U_upper_right,
+                        node_id = counter + 2,
+                        # initialize a node's LB with the objective of relaxation of parent
+                        LB = objective_relax,
+                        parent_id = current_node.node_id,
+                    )
                     push!(nodes, left_child_node, right_child_node)
                     ancestry[current_node.node_id] = [counter + 1, counter + 2]
-                    counter += 2                    
+                    counter += 2
                 end
             elseif branching_region in ["angular", "polyhedral", "hybrid"]
                 φ_relax = zeros(n-1, k)
@@ -846,20 +873,25 @@ function master_problem_frob_matrixcomp_feasible(
     U::Matrix{Float64}, 
     X::Matrix{Float64}, 
     Θ::Matrix{Float64}, 
+    use_matrix_cuts::Bool,
     ;
     orthogonality_tolerance::Float64 = 0.0, # previous value 1e-5
     projection_tolerance::Float64 = 0.0, # previous value 1e-6
     lifted_variable_tolerance::Float64 = 0.0, # previous value 1e-6
 )
-    return (
-        all( (abs.(U' * U - I)) .≤ orthogonality_tolerance )
-        && sum(Y[i,i] for i in 1:size(Y,1)) ≤ size(U, 2)
-        && eigvals(Symmetric(Y - U * U'), 1:1)[1] ≥ - projection_tolerance
-        && eigvals(Symmetric([Y X; X' Θ]), 1:1)[1] ≥ - lifted_variable_tolerance
-    )
+    if use_matrix_cuts
+        return (eigvals(Symmetric(U * U' - Y), 1:1)[1] ≥ - projection_tolerance)
+    else 
+        return (
+            all( (abs.(U' * U - I)) .≤ orthogonality_tolerance )
+            && sum(Y[i,i] for i in 1:size(Y,1)) ≤ size(U, 2)
+            && eigvals(Symmetric(Y - U * U'), 1:1)[1] ≥ - projection_tolerance
+            && eigvals(Symmetric([Y X; X' Θ]), 1:1)[1] ≥ - lifted_variable_tolerance
+        )
+    end
 end
 
-function relax_feasibility_frob_matrixcomp(
+function relax_feasibility_frob_matrixcomp( # this is the version without matrix_cuts
     n::Int,
     k::Int,
     branching_region::String,
@@ -1026,6 +1058,7 @@ function relax_frob_matrixcomp(
     end,
     U_upper::Array{Float64,2} = ones(n,k),
     polyhedra::Union{Vector, Nothing} = nothing,
+    matrix_cuts::Union{Vector, Nothing} = nothing,
     orthogonality_tolerance::Float64 = 0.0,
     solver_output::Int = 0,
 )
@@ -1085,11 +1118,15 @@ function relax_frob_matrixcomp(
         set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     end
 
+    use_matrix_cuts = !isnothing(matrix_cuts)
+
     @variable(model, X[1:n, 1:m])
     @variable(model, Y[1:n, 1:n], Symmetric)
     @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
-    @variable(model, t[1:n, 1:k, 1:k])
+    if !use_matrix_cuts
+        @variable(model, t[1:n, 1:k, 1:k])
+    end
 
     @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
     @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
@@ -1109,73 +1146,116 @@ function relax_frob_matrixcomp(
             end
         end
     end
-        
-    # McCormick inequalities at U_lower and U_upper here
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≥ (
-            U_lower[i, j2] * U[i, j1] 
-            + U_lower[i, j1] * U[i, j2] 
-            - U_lower[i, j1] * U_lower[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≥ (
-            U_upper[i, j2] * U[i, j1] 
-            + U_upper[i, j1] * U[i, j2] 
-            - U_upper[i, j1] * U_upper[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≤ (
-            U_upper[i, j2] * U[i, j1] 
-            + U_lower[i, j1] * U[i, j2] 
-            - U_lower[i, j1] * U_upper[i, j2]
-        )
-    )
-    @constraint(
-        model,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≤ (
-            U_lower[i, j2] * U[i, j1] 
-            + U_upper[i, j1] * U[i, j2] 
-            - U_upper[i, j1] * U_lower[i, j2]
-        )
-    )
 
-    # Orthogonality constraints U'U = I using new variables
-    for j1 = 1:k, j2 = j1:k
-        if (j1 == j2)
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + orthogonality_tolerance
-            )
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - orthogonality_tolerance
-            )
-        else
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≤ 0.0 + orthogonality_tolerance
-            )
-            @constraint(
-                model,
-                sum(t[i, j1, j2] for i = 1:n) ≥ 0.0 - orthogonality_tolerance
-            )
+    # matrix cuts on U, if supplied
+    if use_matrix_cuts 
+        if length(matrix_cuts) > 0
+            for (x, Û, directions) in matrix_cuts
+                for j in 1:k
+                    if directions[j] == "left"
+                        @constraint(
+                            model, 
+                            -1 ≤ Compat.dot(x, U[:,j]), 
+                        )
+                        @constraint(
+                            model, 
+                            Compat.dot(x, U[:,j])
+                            ≤ Compat.dot(x, Û[:,j]), 
+                        )
+                        @constraint(
+                            model,
+                            Û[:,j]' * x * x' * U[:,j] 
+                            .+ Compat.dot(x, Û[:,j] - U[:,j])
+                            .≥ Compat.dot((x * x'), Y)
+                        )
+                    elseif directions[j] == "right"
+                        @constraint(
+                            model,
+                            Compat.dot(x, Û[:,j]) 
+                            ≤ Compat.dot(x, U[:,j]),
+                        )
+                        @constraint(
+                            model,
+                            Compat.dot(x, U[:,j]) ≤ 1,
+                        )
+                        @constraint(
+                            model,
+                            Û[:,j]' * x * x' * U[:,j] 
+                            .+ Compat.dot(x, U[:,j] - Û[:,j])
+                            .≥ Compat.dot((x * x'), Y)
+                        )
+                    end
+                end
+            end
         end
+    else
+        # McCormick inequalities at U_lower and U_upper here
+        @constraint(
+            model,
+            [i = 1:n, j1 = 1:k, j2 = j1:k],
+            t[i, j1, j2] ≥ (
+                U_lower[i, j2] * U[i, j1] 
+                + U_lower[i, j1] * U[i, j2] 
+                - U_lower[i, j1] * U_lower[i, j2]
+            )
+        )
+        @constraint(
+            model,
+            [i = 1:n, j1 = 1:k, j2 = j1:k],
+            t[i, j1, j2] ≥ (
+                U_upper[i, j2] * U[i, j1] 
+                + U_upper[i, j1] * U[i, j2] 
+                - U_upper[i, j1] * U_upper[i, j2]
+            )
+        )
+        @constraint(
+            model,
+            [i = 1:n, j1 = 1:k, j2 = j1:k],
+            t[i, j1, j2] ≤ (
+                U_upper[i, j2] * U[i, j1] 
+                + U_lower[i, j1] * U[i, j2] 
+                - U_lower[i, j1] * U_upper[i, j2]
+            )
+        )
+        @constraint(
+            model,
+            [i = 1:n, j1 = 1:k, j2 = j1:k],
+            t[i, j1, j2] ≤ (
+                U_lower[i, j2] * U[i, j1] 
+                + U_upper[i, j1] * U[i, j2] 
+                - U_upper[i, j1] * U_lower[i, j2]
+            )
+        )
+
+        # Orthogonality constraints U'U = I using new variables
+        for j1 = 1:k, j2 = j1:k
+            if (j1 == j2)
+                @constraint(
+                    model,
+                    sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + orthogonality_tolerance
+                )
+                @constraint(
+                    model,
+                    sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - orthogonality_tolerance
+                )
+            else
+                @constraint(
+                    model,
+                    sum(t[i, j1, j2] for i = 1:n) ≤ 0.0 + orthogonality_tolerance
+                )
+                @constraint(
+                    model,
+                    sum(t[i, j1, j2] for i = 1:n) ≥ 0.0 - orthogonality_tolerance
+                )
+            end
+        end
+        
+        @constraint(
+            model,
+            [i = 1:n, j1 = 2:k, j2 = 1:(j1-1)],
+            t[i,j1,j2] == 0.0
+        )
     end
-    
-    @constraint(
-        model,
-        [i = 1:n, j1 = 2:k, j2 = 1:(j1-1)],
-        t[i,j1,j2] == 0.0
-    )
     
     # 2-norm of columns of U are ≤ 1
     @constraint(
@@ -1773,4 +1853,48 @@ function compute_jacobian(
         end
     end                
     return jacobian
+end
+
+function create_matrix_cut_child_nodes(
+    Y::Matrix{Float64},
+    U::Matrix{Float64},
+    U_lower::Matrix{Float64},
+    U_upper::Matrix{Float64},
+    matrix_cuts::Vector{Tuple},
+    counter::Int,
+    node_id::Int,
+    objective_relax::Float64,
+)
+    # returns a tuple:
+    # x: (n,) most negative eigenvector of U U' - Y
+    # U: (n, k) 
+    if !(
+        size(U) == size(U_lower) == size(U_upper)
+        && size(Y, 1) == size(U, 1)
+    )
+        error("""
+        Dimension mismatch.
+        Input matrix Y must have size (n, n); $(size(Y)) instead.
+        Input matrix U must have size (n, k); $(size(U)) instead.
+        Input matrix U_lower must have size (n, k); $(size(U_lower)) instead.
+        Input matrix U_upper must have size (n, k); $(size(U_upper)) instead.
+        """)
+    end
+    (n, k) = size(U)
+
+    x = eigen(U * U' - Y).vectors[:,1]
+    return (
+        BBNode(
+            U_lower = U_lower,
+            U_upper = U_upper,
+            matrix_cuts = vcat(matrix_cuts, [(x, U, directions)]),
+            node_id = counter + ind,
+            # initialize a node's LB with the objective of relaxation of parent
+            LB = objective_relax,
+            parent_id = node_id,
+        )
+        for (ind, directions) in enumerate(
+            Iterators.product(repeat([["left", "right"]], k)...)
+        )
+    )
 end
