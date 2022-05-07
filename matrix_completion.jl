@@ -535,7 +535,7 @@ function branchandbound_frob_matrixcomp(
                     if (
                         branching_type == "lexicographic"
                         ||
-                        !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                        any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
                     )
                         (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
                     elseif branching_type == "bounds" # TODO: UNTESTED
@@ -563,8 +563,8 @@ function branchandbound_frob_matrixcomp(
                         end
                         (_, ind) = findmin(deriv_U_change)
                     end
-                    # finding branch_val
-                    if !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                    # finding branch_val)
+                    if any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
                         diff = current_node.U_upper[ind] - current_node.U_lower[ind]
                         branch_val = current_node.U_lower[ind] + diff / 2
                     elseif branching_type == "bounds" # custom branch_point
@@ -622,7 +622,7 @@ function branchandbound_frob_matrixcomp(
                 if (
                     branching_type == "lexicographic"
                     ||
-                    !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                    any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
                 )
                     (_, ind) = findmax(current_node.φ_upper - current_node.φ_lower)
                 elseif branching_type == "bounds" # TODO: UNTESTED
@@ -660,7 +660,7 @@ function branchandbound_frob_matrixcomp(
                 end
                 # finding branch_val
                 if (
-                    !all((current_node.U_upper .≤ 0.0) .| (current_node.U_lower .≥ 0.0))
+                    any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
                     || # it's possible for φ_relax to be outside the ranges elementwise
                     current_node.φ_lower[ind] > φ_relax[ind]
                     ||
