@@ -111,8 +111,9 @@ function branchandbound_frob_matrixcomp(
         Input matrix indices must have size (n, m).
         """)
     end
-
+    
     log_time = Dates.now()
+    Random.seed!(0)
 
     (n, m) = size(A)
     printlist = [
