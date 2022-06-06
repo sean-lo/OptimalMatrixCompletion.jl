@@ -40,7 +40,7 @@ function branchandbound_frob_matrixcomp(
     branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
     branch_point::String = "midpoint", # determine which value to branch on: either "midpoint" or "current_point"
     node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst"
-    gap::Float64 = 1e-6, # optimality gap for algorithm (proportion)
+    gap::Float64 = 1e-4, # optimality gap for algorithm (proportion)
     use_matrix_cuts::Bool = true,
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
