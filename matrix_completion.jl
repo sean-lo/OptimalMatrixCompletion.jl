@@ -1,4 +1,5 @@
 using LinearAlgebra
+using Arpack
 using Random
 using Compat
 
@@ -877,18 +878,28 @@ function master_problem_frob_matrixcomp_feasible(
     Θ::Matrix{Float64}, 
     use_matrix_cuts::Bool,
     ;
-    orthogonality_tolerance::Float64 = 0.0, # previous value 1e-5
-    projection_tolerance::Float64 = 0.0, # previous value 1e-6
-    lifted_variable_tolerance::Float64 = 0.0, # previous value 1e-6
+    orthogonality_tolerance::Float64 = 0.0,
+    projection_tolerance::Float64 = 1e-6, # needs to be greater than 0 because of Arpack library
+    lifted_variable_tolerance::Float64 = 1e-6, # needs to be greater than 0 because of Arpack library
 )
     if use_matrix_cuts
-        return (eigvals(Symmetric(U * U' - Y), 1:1)[1] ≥ - projection_tolerance)
+        return (
+            eigs(Symmetric(U * U' - Y), nev=1, which=:SR, tol=1e-6)[1][1]
+            ≥ 
+            - projection_tolerance
+        )
     else 
         return (
             all( (abs.(U' * U - I)) .≤ orthogonality_tolerance )
             && sum(Y[i,i] for i in 1:size(Y,1)) ≤ size(U, 2)
-            && eigvals(Symmetric(Y - U * U'), 1:1)[1] ≥ - projection_tolerance
-            && eigvals(Symmetric([Y X; X' Θ]), 1:1)[1] ≥ - lifted_variable_tolerance
+            && (
+                eigs(Symmetric(Y - U * U'), nev=1, which=:SR, tol=1e-6)[1][1]
+                ≥ - projection_tolerance
+            )
+            && (
+                eigs(Symmetric([Y X; X' Θ]), nev=1, which=:SR, tol=1e-6)[1][1]
+                ≥ - lifted_variable_tolerance
+            )
         )
     end
 end
@@ -1889,8 +1900,9 @@ function create_matrix_cut_child_nodes(
         """)
     end
     (n, k) = size(U)
-
-    x = eigen(U * U' - Y).vectors[:,1]
+    
+    _, x = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
+    
     return (
         BBNode(
             U_lower = U_lower,
