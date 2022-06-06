@@ -24,6 +24,7 @@ using Polyhedra
     φ_upper::Union{Matrix{Float64}, Nothing} = nothing
     matrix_cuts::Union{Vector{Tuple}, Nothing} = nothing
     LB::Union{Float64, Nothing} = nothing
+    depth::Int
     node_id::Int
     parent_id::Int
 end
@@ -171,6 +172,11 @@ function branchandbound_frob_matrixcomp(
     start_time = time()
     solve_time_relaxation_feasibility = 0.0
     solve_time_relaxation = 0.0
+    dict_solve_times_relaxation = DataFrame(
+        node_id = Int[],
+        depth = Int[],
+        solve_time = Float64[],
+    )
     solve_time_altmin = 0.0
     solve_time_U_ranges = 0.0
     solve_time_polyhedra = 0.0
@@ -228,8 +234,9 @@ function branchandbound_frob_matrixcomp(
             U_lower = U_lower_initial, 
             U_upper = U_upper_initial, 
             matrix_cuts = [],
-            node_id = 1,
             LB = lower,
+            depth = 0,
+            node_id = 1,
             parent_id = 0,
         )
     elseif branching_region in ["angular", "polyhedral", "hybrid"]
@@ -238,8 +245,9 @@ function branchandbound_frob_matrixcomp(
         initial_node = BBNode(
             φ_lower = φ_lower_initial, 
             φ_upper = φ_upper_initial, 
-            node_id = 1,
             LB = lower,
+            depth = 0,
+            node_id = 1,
             parent_id = 0,
         )
     end
@@ -419,6 +427,14 @@ function branchandbound_frob_matrixcomp(
                 )
             end
             solve_time_relaxation += relax_result["solve_time"]
+            push!(
+                dict_solve_times_relaxation,
+                [
+                    current_node.node_id,
+                    current_node.depth,
+                    relax_result["solve_time"],
+                ]
+            )
             if relax_result["feasible"] == false # should not happen, since this should be checked by relax_feasibility_frob_matrixcomp
                 nodes_relax_infeasible += 1
                 split_flag = false
@@ -525,7 +541,9 @@ function branchandbound_frob_matrixcomp(
                             Y_relax, U_relax,
                             current_node.U_lower, current_node.U_upper,
                             current_node.matrix_cuts,
-                            counter, current_node.node_id, 
+                            counter, 
+                            current_node.depth,
+                            current_node.node_id, 
                             objective_relax,
                         ))
                     )
@@ -593,17 +611,19 @@ function branchandbound_frob_matrixcomp(
                     left_child_node = BBNode(
                         U_lower = U_lower_left,
                         U_upper = U_upper_left,
-                        node_id = counter + 1,
                         # initialize a node's LB with the objective of relaxation of parent
                         LB = objective_relax,
+                        depth = current_node.depth + 1,
+                        node_id = counter + 1,
                         parent_id = current_node.node_id,
                     )
                     right_child_node = BBNode(
                         U_lower = U_lower_right,
                         U_upper = U_upper_right,
-                        node_id = counter + 2,
                         # initialize a node's LB with the objective of relaxation of parent
                         LB = objective_relax,
+                        node_id = counter + 2,
+                        depth = current_node.depth + 1,
                         parent_id = current_node.node_id,
                     )
                     push!(nodes, left_child_node, right_child_node)
@@ -694,17 +714,19 @@ function branchandbound_frob_matrixcomp(
                 left_child_node = BBNode(
                     φ_lower = φ_lower_left,
                     φ_upper = φ_upper_left,
-                    node_id = counter + 1,
                     # initialize a node's LB with the objective of relaxation of parent
                     LB = objective_relax,
+                    depth = current_node.depth + 1,
+                    node_id = counter + 1,
                     parent_id = current_node.node_id,
                 )
                 right_child_node = BBNode(
                     φ_lower = φ_lower_right,
                     φ_upper = φ_upper_right,
-                    node_id = counter + 2,
                     # initialize a node's LB with the objective of relaxation of parent
                     LB = objective_relax,
+                    depth = current_node.depth + 1,
+                    node_id = counter + 2,
                     parent_id = current_node.node_id,
                 )
                 push!(nodes, left_child_node, right_child_node)
@@ -785,6 +807,7 @@ function branchandbound_frob_matrixcomp(
         "solve_time_altmin" => solve_time_altmin,
         "solve_time_relaxation_feasibility" => solve_time_relaxation_feasibility,
         "solve_time_relaxation" => solve_time_relaxation,
+        "dict_solve_times_relaxation" => dict_solve_times_relaxation,
         "solve_time_U_ranges" => solve_time_U_ranges,
         "solve_time_polyhedra" => solve_time_polyhedra,
         "nodes_explored" => nodes_explored,
@@ -1881,6 +1904,7 @@ function create_matrix_cut_child_nodes(
     U_upper::Matrix{Float64},
     matrix_cuts::Vector{Tuple},
     counter::Int,
+    depth::Int,
     node_id::Int,
     objective_relax::Float64,
 )
@@ -1908,9 +1932,10 @@ function create_matrix_cut_child_nodes(
             U_lower = U_lower,
             U_upper = U_upper,
             matrix_cuts = vcat(matrix_cuts, [(x, U, directions)]),
-            node_id = counter + ind,
             # initialize a node's LB with the objective of relaxation of parent
             LB = objective_relax,
+            depth = depth + 1,
+            node_id = counter + ind,
             parent_id = node_id,
         )
         for (ind, directions) in enumerate(
