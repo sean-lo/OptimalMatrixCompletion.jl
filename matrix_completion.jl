@@ -1186,7 +1186,12 @@ function relax_frob_matrixcomp(
     # matrix cuts on U, if supplied
     if use_matrix_cuts 
         if length(matrix_cuts) > 0
-            for (x, Û, directions) in matrix_cuts
+            @expression(
+                model,
+                matrix_cut[l=1:length(matrix_cuts)],
+                zero(AffExpr),
+            )
+            for (l, (x, Û, directions)) in enumerate(matrix_cuts)
                 for j in 1:k
                     if directions[j] == "left"
                         @constraint(
@@ -1198,11 +1203,10 @@ function relax_frob_matrixcomp(
                             Compat.dot(x, U[:,j])
                             ≤ Compat.dot(x, Û[:,j]), 
                         )
-                        @constraint(
-                            model,
-                            Û[:,j]' * x * x' * U[:,j] 
+                        add_to_expression!(
+                            matrix_cut[l],
+                            Û[:,j]' * x * x' * U[:,j]
                             .+ Compat.dot(x, Û[:,j] - U[:,j])
-                            .≥ Compat.dot((x * x'), Y)
                         )
                     elseif directions[j] == "right"
                         @constraint(
@@ -1214,14 +1218,17 @@ function relax_frob_matrixcomp(
                             model,
                             Compat.dot(x, U[:,j]) ≤ 1,
                         )
-                        @constraint(
-                            model,
-                            Û[:,j]' * x * x' * U[:,j] 
+                        add_to_expression!(
+                            matrix_cut[l],
+                            Û[:,j]' * x * x' * U[:,j]
                             .+ Compat.dot(x, U[:,j] - Û[:,j])
-                            .≥ Compat.dot((x * x'), Y)
                         )
                     end
                 end
+                @constraint(
+                    model,
+                    matrix_cut[l] ≥ Compat.dot((x * x'), Y),
+                )
             end
         end
     else
