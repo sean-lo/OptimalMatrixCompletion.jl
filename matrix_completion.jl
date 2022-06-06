@@ -1401,6 +1401,58 @@ function alternating_minimization(
     @variable(model_U, U[1:n, 1:k])
     @constraint(model_U, U .≤ U_upper)
     @constraint(model_U, U .≥ U_lower)
+    # probably should impose McCormick <- local exploration
+    @variable(model_U, t[1:n, 1:n, 1:k])
+    @constraint(
+        model_U,
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
+        t[i, j1, j2] ≥ (
+            U_lower[i, j2] * U[i, j1] 
+            + U_lower[i, j1] * U[i, j2] 
+            - U_lower[i, j1] * U_lower[i, j2]
+        )
+    )
+    @constraint(
+        model_U,
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
+        t[i, j1, j2] ≥ (
+            U_upper[i, j2] * U[i, j1] 
+            + U_upper[i, j1] * U[i, j2] 
+            - U_upper[i, j1] * U_upper[i, j2]
+        )
+    )
+    @constraint(
+        model_U,
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
+        t[i, j1, j2] ≤ (
+            U_upper[i, j2] * U[i, j1] 
+            + U_lower[i, j1] * U[i, j2] 
+            - U_lower[i, j1] * U_upper[i, j2]
+        )
+    )
+    @constraint(
+        model_U,
+        [i = 1:n, j1 = 1:k, j2 = j1:k],
+        t[i, j1, j2] ≤ (
+            U_lower[i, j2] * U[i, j1] 
+            + U_upper[i, j1] * U[i, j2] 
+            - U_upper[i, j1] * U_lower[i, j2]
+        )
+    )
+    # Orthogonality constraints U'U = I using new variables
+    for j1 = 1:k, j2 = j1:k
+        if (j1 == j2)
+            @constraint(
+                model_U,
+                sum(t[i, j1, j2] for i = 1:n) == 1.0
+            )
+        else
+            @constraint(
+                model_U,
+                sum(t[i, j1, j2] for i = 1:n) == 0.0
+            )
+        end
+    end
     
     model_V = Model(Gurobi.Optimizer)
     set_silent(model_V)
