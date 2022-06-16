@@ -146,22 +146,6 @@ function branchandbound_frob_matrixcomp(
     altmin_probability = 0.05 # TODO: make this adaptive
 
     instance = Dict()
-    instance["params"] = Dict(
-        "k" => k,
-        "m" => m,
-        "n" => n,
-        "A" => A,
-        "indices" => indices,
-        "num_indices" => convert(Int, round(sum(indices))),
-        "γ" => γ,
-        "λ" => λ,
-        "branching_region" => branching_region,
-        "node_selection" => node_selection,
-        "use_matrix_cuts" => use_matrix_cuts,
-        "optimality_gap" => gap,
-        "max_steps" => max_steps,
-        "time_limit" => time_limit,
-    )
     instance["run_log"] = DataFrame(
         explored = Int[],
         total = Int[],
@@ -834,6 +818,22 @@ function branchandbound_frob_matrixcomp(
     solution["MSE_all"] = compute_MSE(solution["X"], A, indices, kind = "all")
 
     instance["run_details"] = OrderedDict(
+        "k" => k,
+        "m" => m,
+        "n" => n,
+        "A" => A,
+        "indices" => indices,
+        "num_indices" => convert(Int, round(sum(indices))),
+        "γ" => γ,
+        "λ" => λ,
+        "branching_region" => branching_region,
+        "branching_type" => branching_type,
+        "branch_point" => branch_point,
+        "node_selection" => node_selection,
+        "use_matrix_cuts" => use_matrix_cuts,
+        "optimality_gap" => gap,
+        "max_steps" => max_steps,
+        "time_limit" => time_limit,
         "altmin_probability" => altmin_probability,
         "log_time" => log_time,
         "start_time" => start_time,
