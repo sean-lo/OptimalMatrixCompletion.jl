@@ -220,17 +220,20 @@ function branchandbound_frob_matrixcomp(
     )
     MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
     MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
+    MSE_all_initial = compute_MSE(X_initial, A, indices, kind = "all")
     
     solution = Dict(
         "objective_initial" => objective_initial,
         "MSE_in_initial" => MSE_in_initial,
         "MSE_out_initial" => MSE_out_initial,
+        "MSE_all_initial" => MSE_all_initial,
         "Y_initial" => Y_initial,
         "U_initial" => U_initial,
         "X_initial" => X_initial,
         "objective" => objective_initial,
         "MSE_in" => MSE_in_initial,
         "MSE_out" => MSE_out_initial,
+        "MSE_all" => MSE_all_initial,
         "Y" => Y_initial,
         "U" => U_initial,
         "X" => X_initial,
@@ -828,6 +831,7 @@ function branchandbound_frob_matrixcomp(
 
     solution["MSE_in"] = compute_MSE(solution["X"], A, indices, kind = "in")
     solution["MSE_out"] = compute_MSE(solution["X"], A, indices, kind = "out") 
+    solution["MSE_all"] = compute_MSE(solution["X"], A, indices, kind = "all")
 
     instance["run_details"] = OrderedDict(
         "altmin_probability" => altmin_probability,
