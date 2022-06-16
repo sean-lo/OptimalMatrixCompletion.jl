@@ -1594,16 +1594,25 @@ function compute_MSE(X, A, indices; kind = "out")
         if length(indices) == sum(indices)
             return 0.0
         else
-            return sum((X - A).^2 .* (1 .- indices)) / (length(indices) - sum(indices))
+            return (
+                sum((X - A).^2 .* (1 .- indices)) 
+                / (length(indices) - sum(indices))
+            )
         end
     elseif kind == "in"
         if sum(indices) == 0.0
             return 0.0
         else
-            return sum((X - A).^2 .* indices) / sum(indices)
+            return (
+                sum((X - A).^2 .* indices) 
+                / sum(indices)
+            )
         end
     elseif kind == "all"
-        return sum((X - A).^2) / length(indices)
+        return (
+            sum((X - A).^2) 
+            / length(indices)
+        )
     else
         error("""
         Input argument `kind` not recognized!
