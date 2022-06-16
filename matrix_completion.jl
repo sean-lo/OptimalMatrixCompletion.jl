@@ -143,6 +143,8 @@ function branchandbound_frob_matrixcomp(
         print(stdout, message)
     end
 
+    altmin_probability = 0.05 # TODO: make this adaptive
+
     instance = Dict()
     instance["params"] = Dict(
         "k" => k,
@@ -178,6 +180,11 @@ function branchandbound_frob_matrixcomp(
         solve_time = Float64[],
     )
     solve_time_altmin = 0.0
+    dict_solve_times_altmin = DataFrame(
+        node_id = Int[],
+        depth = Int[],
+        solve_time = Float64[],
+    )
     solve_time_U_ranges = 0.0
     solve_time_polyhedra = 0.0
 
@@ -195,7 +202,15 @@ function branchandbound_frob_matrixcomp(
         ;
         U_initial = altmin_U_initial,
     )
-    solve_time_altmin = altmin_results["solve_time"]
+    solve_time_altmin += altmin_results["solve_time"]
+    push!(
+        dict_solve_times_altmin,
+        [
+            0,
+            0,
+            altmin_results["solve_time"],
+        ]
+    )
     # do a re-SVD on U * V in order to recover orthonormal U
     X_initial = altmin_results["U"] * altmin_results["V"]
     U_initial = svd(X_initial).U[:,1:k]
@@ -294,8 +309,15 @@ function branchandbound_frob_matrixcomp(
     nodes_relax_feasible_split = 0 # not pruned
 
     # (6) + (7) + (9) should yield (5)
-    # pruned nodes: (4) + (6) + (7)
+    # pruned nodes: (3) + (4) + (6) + (7)
     # not pruned nodes: (9)
+
+    # (10) number of nodes on which alternating minimization heuristic is performed
+    nodes_relax_feasible_split_altmin = 0 # not pruned
+    # (10) ⊂ (9)
+    # (11) number of nodes on which alternating minimization heuristic is performed and results in an improvement on the incumbent solution
+    nodes_relax_feasible_split_altmin_improvement = 0
+    # (11) ⊂ (10)
 
     while (
         now_gap > gap &&
@@ -487,7 +509,7 @@ function branchandbound_frob_matrixcomp(
         end
 
         # perform alternating minimization heuristic
-        altmin_flag_now = altmin_flag && (rand() > 0.95)
+        altmin_flag_now = altmin_flag && (rand() < altmin_probability)
         if split_flag
             if altmin_flag_now
                 # TODO: check if it's not extremely close to projs already
@@ -500,8 +522,16 @@ function branchandbound_frob_matrixcomp(
                     U_lower = current_node.U_lower,
                     U_upper = current_node.U_upper,
                 )
-
+                nodes_relax_feasible_split_altmin += 1
                 solve_time_altmin += altmin_results_BB["solve_time"]
+                push!(
+                    dict_solve_times_altmin,
+                    [
+                        current_node.node_id,
+                        current_node.depth,
+                        altmin_results_BB["solve_time"],
+                    ]
+                )
                 X_local = altmin_results_BB["U"] * altmin_results_BB["V"]
                 U_local = svd(X_local).U[:,1:k] 
                 # no guarantees that this will be within U_lower and U_upper
@@ -513,7 +543,7 @@ function branchandbound_frob_matrixcomp(
                 )
 
                 if objective_local < solution["objective"]
-                    # TODO: include a counter here
+                    nodes_relax_feasible_split_altmin_improvement += 1
                     solution["objective"] = objective_local
                     upper = objective_local
                     solution["Y"] = copy(Y_local)
@@ -800,11 +830,13 @@ function branchandbound_frob_matrixcomp(
     solution["MSE_out"] = compute_MSE(solution["X"], A, indices, kind = "out") 
 
     instance["run_details"] = OrderedDict(
+        "altmin_probability" => altmin_probability,
         "log_time" => log_time,
         "start_time" => start_time,
         "end_time" => end_time,
         "time_taken" => time_taken,
         "solve_time_altmin" => solve_time_altmin,
+        "dict_solve_times_altmin" => dict_solve_times_altmin,
         "solve_time_relaxation_feasibility" => solve_time_relaxation_feasibility,
         "solve_time_relaxation" => solve_time_relaxation,
         "dict_solve_times_relaxation" => dict_solve_times_relaxation,
@@ -819,6 +851,8 @@ function branchandbound_frob_matrixcomp(
         "nodes_master_feasible" => nodes_master_feasible,
         "nodes_master_feasible_improvement" => nodes_master_feasible_improvement,
         "nodes_relax_feasible_split" => nodes_relax_feasible_split,
+        "nodes_relax_feasible_split_altmin" => nodes_relax_feasible_split_altmin,
+        "nodes_relax_feasible_split_altmin_improvement" => nodes_relax_feasible_split_altmin_improvement,
     )
     push!(
         printlist, 
