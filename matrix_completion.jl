@@ -39,7 +39,8 @@ function branchandbound_frob_matrixcomp(
     branching_region::String = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
     branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
     branch_point::String = "midpoint", # determine which value to branch on: either "midpoint" or "current_point"
-    node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst"
+    node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst"
+    bestfirst_depthfirst_cutoff::Int = 10000,
     gap::Float64 = 1e-4, # optimality gap for algorithm (proportion)
     use_matrix_cuts::Bool = true,
     root_only::Bool = false, # if true, only solves relaxation at root node
@@ -99,10 +100,10 @@ function branchandbound_frob_matrixcomp(
         Branch point must be either "midpoint" or "current_point"; $branch_point supplied instead.
         """)
     end
-    if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst"])
+    if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst", "bestfirst_depthfirst"])
         error("""
         Invalid input for node selection.
-        Node selection must be either "breadthfirst" or "bestfirst" or "depthfirst"; $node_selection supplied instead.
+        Node selection must be either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst"; $node_selection supplied instead.
         """)
     end
 
@@ -312,16 +313,26 @@ function branchandbound_frob_matrixcomp(
         time() - start_time ≤ time_limit
     )
         if length(nodes) != 0
-            if node_selection == "breadthfirst"
+            if node_selection == "bestfirst_depthfirst"
+                if length(nodes) > bestfirst_depthfirst_cutoff
+                    node_selection_here = "depthfirst"
+                else
+                    node_selection_here = "bestfirst"
+                end
+            else
+                node_selection_here = node_selection
+            end
+
+            if node_selection_here == "breadthfirst"
                 current_node = popfirst!(nodes)
-            elseif node_selection == "bestfirst"
+            elseif node_selection_here == "bestfirst"
                 # break ties by depth-first search (choosing the node most recently added to queue)
                 (min_LB, min_LB_index) = findmin(node.LB for node in reverse(nodes))
                 current_node = popat!(
                     nodes, 
                     length(nodes) + 1 - min_LB_index,
                 )
-            elseif node_selection == "depthfirst" # NOTE: may not work well
+            elseif node_selection_here == "depthfirst" # NOTE: may not work well
                 current_node = pop!(nodes)
             end
             nodes_explored += 1

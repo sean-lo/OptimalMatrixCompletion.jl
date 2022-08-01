@@ -14,6 +14,7 @@ function test_branchandbound_frob_matrixcomp(
     ϵ::Float64 = 0.01,
     branching_region::String = "angular",
     node_selection::String = "breadthfirst",
+    bestfirst_depthfirst_cutoff::Int = 10000,
     use_matrix_cuts::Bool = true,
     root_only::Bool = false,
     altmin_flag::Bool = true,
@@ -28,10 +29,10 @@ function test_branchandbound_frob_matrixcomp(
         Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
         """)
     end
-    if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst"])
+    if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst", "bestfirst_depthfirst"])
         error("""
         Invalid input for node selection.
-        Node selection must be either "breadthfirst" or "bestfirst" or "depthfirst"; $node_selection supplied instead.
+        Node selection must be either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst"; $node_selection supplied instead.
         """)
     end
     (A, indices) = generate_matrixcomp_data(
@@ -49,6 +50,7 @@ function test_branchandbound_frob_matrixcomp(
         ;
         branching_region = branching_region,
         node_selection = node_selection,
+        bestfirst_depthfirst_cutoff = bestfirst_depthfirst_cutoff,
         use_matrix_cuts = use_matrix_cuts,
         root_only = root_only,
         altmin_flag = altmin_flag,
