@@ -45,6 +45,7 @@ function branchandbound_frob_matrixcomp(
     use_matrix_cuts::Bool = true,
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
+    use_max_steps::Bool = false,
     max_steps::Int = 1000000,
     time_limit::Int = 3600, # time limit in seconds
     update_step::Int = 1000,
@@ -134,6 +135,7 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("Node selection:    %15s\n", node_selection),
         Printf.@sprintf("Use matrix cuts?:  %15s\n", use_matrix_cuts),
         Printf.@sprintf("Optimality gap:    %15g\n", gap),
+        Printf.@sprintf("Cap on nodes?      %15s\n", use_max_steps),
         Printf.@sprintf("Maximum nodes:     %15d\n", max_steps),
         Printf.@sprintf("Time limit (s):    %15d\n", time_limit),
         "-----------------------------------------------------------------------------------\n",
@@ -308,9 +310,9 @@ function branchandbound_frob_matrixcomp(
     # (11) ⊂ (10)
 
     while (
-        now_gap > gap &&
-        counter < max_steps &&
-        time() - start_time ≤ time_limit
+        now_gap > gap 
+        && !(use_max_steps && (counter ≥ max_steps))
+        && time() - start_time ≤ time_limit
     )
         if length(nodes) != 0
             if node_selection == "bestfirst_depthfirst"
@@ -792,7 +794,7 @@ function branchandbound_frob_matrixcomp(
                 current_node.node_id == 1 
                 || (counter ÷ update_step) > (last_updated_counter ÷ update_step)
                 || now_gap ≤ gap 
-                || counter ≥ max_steps
+                || (use_max_steps && counter ≥ max_steps)
                 || time() - start_time > time_limit
             )
                 now_gap = add_update!(
@@ -843,6 +845,7 @@ function branchandbound_frob_matrixcomp(
         "node_selection" => node_selection,
         "use_matrix_cuts" => use_matrix_cuts,
         "optimality_gap" => gap,
+        "use_max_steps" => use_max_steps,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
         "altmin_probability" => altmin_probability,
