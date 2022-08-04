@@ -17,6 +17,8 @@ using Mosek
 using MosekTools
 using Polyhedra
 
+const GRB_ENV = Gurobi.Env()
+
 @with_kw mutable struct BBNode
     U_lower::Union{Matrix{Float64}, Nothing} = nothing
     U_upper::Union{Matrix{Float64}, Nothing} = nothing
@@ -1448,7 +1450,7 @@ function alternating_minimization(
     counter = 0
     objective_current = 1e10
 
-    model_U = Model(Gurobi.Optimizer)
+    model_U = Model(() -> Gurobi.Optimizer(GRB_ENV))
     set_silent(model_U)
     @variable(model_U, U[1:n, 1:k])
     @constraint(model_U, U .≤ U_upper)
@@ -1506,7 +1508,7 @@ function alternating_minimization(
         end
     end
     
-    model_V = Model(Gurobi.Optimizer)
+    model_V = Model(() -> Gurobi.Optimizer(GRB_ENV))
     set_silent(model_V)
     @variable(model_V, V[1:k, 1:m])
 
@@ -1885,7 +1887,7 @@ function φ_ranges_to_polyhedra(
         # which does not contain the origin
         f_lite = angles_to_facet_lite(ϕ1, ϕ2)
         n = size(f_lite[1], 1)
-        model = Model(Gurobi.Optimizer)
+        model = Model(() -> Gurobi.Optimizer(GRB_ENV))
         @variable(model, c[1:n])
         @constraint(model, [i=2:n], Compat.dot(c, (f_lite[1] - f_lite[i])) == 0.0)
         @constraint(model, sum(c) == 1)
