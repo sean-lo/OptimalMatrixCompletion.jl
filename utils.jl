@@ -72,7 +72,7 @@ function generate_masked_bitmatrix(
     end
 end
 
-function generate_matrixcomp_data(
+function generate_matrixcomp_data( # FIXME! make matrices seeds different
     k::Int,
     m::Int,
     n::Int,
@@ -93,10 +93,21 @@ function generate_matrixcomp_data(
         Cannot generate random indices of length more than the size of matrix A.
         """)
     end
-    A = randn(MersenneTwister(seed), Float64, (n, k)) * randn(MersenneTwister(seed), Float64, (k, m))
-    if noise
-        A = A + ϵ * randn(MersenneTwister(seed), Float64, (n, m))
+    if (n > 1000) || (m > 1000)
+        error("""
+        Currently does not support n > 1000, m > 1000. 
+        Supplied n = $n, m = $m.
+        """)
     end
-    indices = generate_masked_bitmatrix(n, m, n_indices, seed)
+    # 4 sources of randomness
+    seeds = abs.(rand(MersenneTwister(seed), Int, 4)) 
+    A_left = randn(MersenneTwister(seeds[1]), Float64, (1000, k))[1:n, :]
+    A_right = randn(MersenneTwister(seeds[2]), Float64, (k, 1000))[:, 1:m]
+    A = A_left * A_right
+    if noise
+        A_noise = randn(MersenneTwister(seeds[3]), Float64, (1000, 1000))[1:n, 1:m]
+        A = A + ϵ * A_noise
+    end
+    indices = generate_masked_bitmatrix(n, m, n_indices, seeds[4])
     return A, indices
 end
