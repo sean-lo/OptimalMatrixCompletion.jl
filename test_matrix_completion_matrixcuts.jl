@@ -23,7 +23,7 @@ function test_branchandbound_frob_matrixcomp(
     node_selection::String = "breadthfirst",
     bestfirst_depthfirst_cutoff::Int = 10000,
     use_disjunctive_cuts::Bool = true,
-    disjunctive_cuts_type::String = "linear",
+    disjunctive_cuts_type::Union{String, Nothing} = nothing,
     root_only::Bool = false,
     altmin_flag::Bool = true,
     use_max_steps::Bool = true,
@@ -33,10 +33,10 @@ function test_branchandbound_frob_matrixcomp(
     with_log::Bool = true,
 )
     if use_disjunctive_cuts
-        if !(disjunctive_cuts_type in ["linear", "semidefinite"])
+        if !(disjunctive_cuts_type in ["linear", "linear2", "semidefinite"])
             error("""
             Invalid input for disjunctive cuts type.
-            Disjunctive cuts type must be either "linear" or "semidefinite";
+            Disjunctive cuts type must be either "linear" or "linear2" or "semidefinite";
             $disjunctive_cuts_type supplied instead.
             """)
         end
@@ -425,225 +425,6 @@ plot!(
     color = :green
 )
 
-
-r = test_branchandbound_frob_matrixcomp(
-    1,10,10,30,0
-    ;
-    γ = 20.0, λ = 0.0,
-    branching_region = "box",
-    use_disjunctive_cuts = true,
-    time_limit = 300,
-);
-solve_times = r[3]["run_details"]["dict_solve_times_relaxation"]
-
-maximum(solve_times[!,:depth])
-plot(
-    1:maximum(solve_times[!,:depth]),
-    [
-        StatsBase.mean(
-            filter(
-                [:depth, :solve_time] => (
-                    (x , y) -> (
-                        x == k 
-                        && y > 0.0
-                    )
-                ), 
-                solve_times
-            )[!, :solve_time]
-        )
-        for k in 1:maximum(solve_times[!,:depth])
-    ]
-)
-
-filter(
-    [:depth, :solve_time] => (
-        (x , y) -> (
-            x == 5 
-            && y > 0.0
-        )
-    ), 
-    solve_times
-)[!, :solve_time]
-
-
-outfile = "logs/runtimes/runtimes_v2.csv"
-headers_table = DataFrame(
-    k = Int[],
-    m = Int[],
-    n = Int[],
-    p = Float64[],
-    num_indices = Int[],
-    noise = Float64[],
-    γ = Float64[],
-    λ = Float64[],
-    node_selection = String[],
-    use_disjunctive_cuts = Bool[],
-    optimality_gap = Float64[],
-    use_max_steps = Bool[],
-    max_steps = Int[],
-    time_limit = Int[],
-    altmin_probability = Float64[],
-    seed = Int[],
-    # results: time
-    time_taken = Float64[],
-    solve_time_altmin = Float64[],
-    solve_time_altmin_root_node = Float64[],
-    solve_time_relaxation_feasibility = Float64[],
-    solve_time_relaxation = Float64[],
-    average_solve_time_relaxation = Float64[],
-    average_solve_time_altmin = Float64[],
-    # results: nodes
-    nodes_explored = Int[],
-    nodes_total = Int[],
-    nodes_dominated = Int[],
-    nodes_relax_infeasible = Int[],
-    nodes_relax_feasible = Int[],
-    nodes_relax_feasible_pruned = Int[],
-    nodes_master_feasible = Int[],
-    nodes_master_feasible_improvement = Int[],
-    nodes_relax_feasible_split = Int[],
-    nodes_relax_feasible_split_altmin = Int[],
-    nodes_relax_feasible_split_altmin_improvement = Int[],
-    # results: bound gap
-    lower_bound_root_node = Float64[],
-    upper_bound_root_node = Float64[],
-    relative_gap_root_node = Float64[],
-    lower_bound = Float64[],
-    upper_bound = Float64[],
-    relative_gap = Float64[],
-    # results: MSE
-    MSE_in_initial = Float64[],
-    MSE_out_initial = Float64[],
-    MSE_all_initial = Float64[],
-    MSE_in = Float64[],
-    MSE_out = Float64[],
-    MSE_all = Float64[],
-)
-CSV.write(outfile, headers_table)
-
-### edit these
-k = 1
-λ = 0.0
-time_limit = 1000
-n_values = [10, 15, 20, 25, 30, 40, 50]
-γ_values = [5.0, 10.0, 20.0] # [5.0, 10.0, 20.0, 40.0, 80.0]
-p_values = [0.3] # [0.3, 0.1]
-noise_values = [0.001, 0.01, 0.1]
-node_selection_values = ["breadthfirst", "bestfirst_depthfirst"] # ["breadthfirst", "bestfirst_depthfirst"]
-seeds = collect(1:20)
-###
-
-
-params = []
-runtimes_df = DataFrame(CSV.File(outfile))
-sort!(runtimes_df, :time_limit, rev = true)
-for (n, γ, p, noise, node_selection, seed) in Iterators.product(
-    n_values, γ_values, p_values, noise_values,
-    node_selection_values,
-    seeds,
-)
-    prev_record = filter(
-        row -> (
-            row.n == n 
-            && row.γ == γ
-            && row.p == p
-            && row.noise == noise
-            && row.node_selection == node_selection
-            && row.seed == seed
-        ), 
-        runtimes_df,
-    )
-    if nrow(prev_record) == 0
-        push!(params, (n, γ, p, noise, node_selection, seed))
-    elseif prev_record[1,:time_taken] > prev_record[1,:time_limit]
-        push!(params, (n, γ, p, noise, node_selection, seed))
-    end
-end
-
-for (n, γ, p, noise, node_selection, seed) in params
-    print("""
-
-    n: $n   γ: $γ   p: $p   noise: $noise
-    node_selection: $node_selection
-    """)
-
-    num_indices = Int(round(n*n*p))
-    r = @suppress test_branchandbound_frob_matrixcomp(
-        k, n, n, num_indices, seed,
-        ;
-        γ = γ, λ = λ,
-        noise = true, ϵ = noise,
-        branching_region = "box", 
-        node_selection = node_selection,
-        use_disjunctive_cuts = true,
-        time_limit = time_limit,
-    )
-    records = [
-        (
-            k = k,
-            m = n,
-            n = n,
-            p = p,
-            num_indices = num_indices,
-            noise = noise,
-            γ = γ,
-            λ = λ,
-            node_selection = node_selection,
-            use_disjunctive_cuts = r[3]["run_details"]["use_disjunctive_cuts"],
-            optimality_gap = r[3]["run_details"]["optimality_gap"],
-            use_max_steps = r[3]["run_details"]["use_max_steps"],
-            max_steps = r[3]["run_details"]["max_steps"],
-            time_limit = time_limit,
-            altmin_probability = r[3]["run_details"]["altmin_probability"],
-            seed = seed,
-            # results: time
-            time_taken = r[3]["run_details"]["time_taken"],
-            solve_time_altmin = r[3]["run_details"]["solve_time_altmin"],
-            solve_time_altmin_root_node = filter(row -> (row.node_id == 0), r[3]["run_details"]["dict_solve_times_altmin"])[1,:solve_time],
-            solve_time_relaxation_feasibility = r[3]["run_details"]["solve_time_relaxation_feasibility"],
-            solve_time_relaxation = r[3]["run_details"]["solve_time_relaxation"],
-            average_solve_time_relaxation = mean(
-                r[3]["run_details"]["dict_solve_times_relaxation"][!,:solve_time]
-            ),
-            average_solve_time_altmin = mean(
-                r[3]["run_details"]["dict_solve_times_altmin"][!,:solve_time]
-            ),
-            # results: nodes
-            nodes_explored = r[3]["run_details"]["nodes_explored"],
-            nodes_total = r[3]["run_details"]["nodes_total"],
-            nodes_dominated = r[3]["run_details"]["nodes_dominated"],
-            nodes_relax_infeasible = r[3]["run_details"]["nodes_relax_infeasible"],
-            nodes_relax_feasible = r[3]["run_details"]["nodes_relax_feasible"],
-            nodes_relax_feasible_pruned = r[3]["run_details"]["nodes_relax_feasible_pruned"],
-            nodes_master_feasible = r[3]["run_details"]["nodes_master_feasible"],
-            nodes_master_feasible_improvement = r[3]["run_details"]["nodes_master_feasible_improvement"],
-            nodes_relax_feasible_split = r[3]["run_details"]["nodes_relax_feasible_split"],
-            nodes_relax_feasible_split_altmin = r[3]["run_details"]["nodes_relax_feasible_split_altmin"],
-            nodes_relax_feasible_split_altmin_improvement = r[3]["run_details"]["nodes_relax_feasible_split_altmin_improvement"],
-            # results: bound gap
-            lower_bound_root_node = r[3]["run_log"][1,:lower],
-            upper_bound_root_node = r[3]["run_log"][1,:upper],
-            relative_gap_root_node = r[3]["run_log"][1,:gap],
-            lower_bound = r[3]["run_log"][end,:lower],
-            upper_bound = r[3]["run_log"][end,:upper],
-            relative_gap = r[3]["run_log"][end,:gap],
-            # results: MSE
-            MSE_in_initial = r[1]["MSE_in_initial"],
-            MSE_out_initial = r[1]["MSE_out_initial"],
-            MSE_all_initial = r[1]["MSE_all_initial"],
-            MSE_in = r[1]["MSE_in"],
-            MSE_out = r[1]["MSE_out"],
-            MSE_all = r[1]["MSE_all"],
-        )
-    ]
-    CSV.write(outfile, DataFrame(records), append=true)
-    message = Printf.@sprintf(
-        "Run %2d:    %6.3f\n",
-        seed, r[3]["run_details"]["time_taken"]
-    )
-    print(stdout, message)
-end 
-
 # node selection strategy tests
 
 r_n1 = test_branchandbound_frob_matrixcomp(
@@ -748,6 +529,43 @@ plot!(
     color = :purple
 )
 
+# Alternative cuts for rank-1
+r_5_1 = test_branchandbound_frob_matrixcomp(
+    1,10,10,30,0
+    ;
+    γ = 9.0, λ = 0.0,
+    disjunctive_cuts_type = "linear",
+    use_disjunctive_cuts = true,
+    time_limit = 60,
+);
+r_5_2 = test_branchandbound_frob_matrixcomp(
+    1,10,10,30,0
+    ;
+    γ = 9.0, λ = 0.0,
+    disjunctive_cuts_type = "linear2",
+    use_disjunctive_cuts = true,
+    time_limit = 60,
+); # Benefit of using linear2: faster convergence
+plot(
+    yaxis=:log10,
+    fmt=:png,
+    ylabel="Relative gap", xlabel="Runtime (s)",
+    title="Experiment 5: (k, m, n, i, seed, γ) = (1,10,10,30,0,9)"
+)
+plot!(
+    r_5_1[3]["run_log"][!,:runtime],
+    r_5_1[3]["run_log"][!,:gap],
+    label = "Linear (1 breakpoint)",
+    color = :orange
+)
+plot!(
+    r_5_2[3]["run_log"][!,:runtime],
+    r_5_2[3]["run_log"][!,:gap],
+    label = "Linear (2 breakpoints)", 
+    color = :red
+)
+
+
 
 # Rank-2 tests
 
@@ -807,11 +625,10 @@ test_branchandbound_frob_matrixcomp(
     ;
     use_disjunctive_cuts = true,
     γ = 5.0, λ = 0.0,
-    disjunctive_cuts_type = "semidefinite",
+    disjunctive_cuts_type = "linear2",
     node_selection = "breadthfirst",
     time_limit = 60,
-) # Bad: explores entire tree, does not close gap, IF does not encounter alternating minimization
- 
+) # Good: converges
 
 test_branchandbound_frob_matrixcomp(
     2,15,15,150,1, 
@@ -827,7 +644,7 @@ test_branchandbound_frob_matrixcomp(
     ;
     use_disjunctive_cuts = true,
     γ = 10.0, λ = 0.0,
-    disjunctive_cuts_type = "semidefinite",
+    disjunctive_cuts_type = "linear2",
     node_selection = "breadthfirst",
     time_limit = 60,
-) # Bad: if altmin, best lower bound > altmin solution
+) # Bad: does not converge after altmin
