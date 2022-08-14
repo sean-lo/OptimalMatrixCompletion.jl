@@ -86,10 +86,10 @@ function branchandbound_frob_matrixcomp(
     end
 
     if use_disjunctive_cuts
-        if !(disjunctive_cuts_type in ["linear", "linear2", "semidefinite"])
+        if !(disjunctive_cuts_type in ["linear", "linear2"])
             error("""
             Invalid input for disjunctive cuts type.
-            Disjunctive cuts type must be either "linear" or "linear2" or "semidefinite";
+            Disjunctive cuts type must be either "linear" or "linear2";
             $disjunctive_cuts_type supplied instead.
             """)
         end
@@ -1228,10 +1228,10 @@ function relax_frob_matrixcomp(
     end
 
     if use_disjunctive_cuts
-        if !(disjunctive_cuts_type in ["linear", "linear2", "semidefinite"])
+        if !(disjunctive_cuts_type in ["linear", "linear2"])
             error("""
             Invalid input for disjunctive cuts type.
-            Disjunctive cuts type must be either "linear" or "linear2" or "semidefinite";
+            Disjunctive cuts type must be either "linear" or "linear2";
             $disjunctive_cuts_type supplied instead.
             """)
         end
@@ -1408,48 +1408,6 @@ function relax_frob_matrixcomp(
                     @constraint(
                         model,
                         matrix_cut[l] ≥ Compat.dot((eigvecs * eigvecs'), Y),
-                    )
-                end
-            elseif disjunctive_cuts_type == "semidefinite"
-                for (l, (eigvecs, Û, directions)) in enumerate(matrix_cuts)
-                    for j in 1:k
-                        if directions[j] == "left"
-                            @constraint(
-                                model,
-                                -1 ≤ Compat.dot(eigvecs[:,j], U[:,j]),
-                            )
-                            @constraint(
-                                model, 
-                                Compat.dot(eigvecs[:,j], U[:,j])
-                                ≤ Compat.dot(eigvecs[:,j], Û[:,j]), 
-                            )
-                        elseif directions[j] == "right"
-                            @constraint(
-                                model,
-                                Compat.dot(eigvecs[:,j], Û[:,j]) 
-                                ≤ Compat.dot(eigvecs[:,j], U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(eigvecs[:,j], U[:,j]) ≤ 1,
-                            )
-                        end
-                    end
-                    S = zeros(Float64, (k,k))
-                    for j in 1:k
-                        if directions[j] == "left"
-                            S[j,j] = -1.0
-                        elseif directions[j] == "right"
-                            S[j,j] = 1.0
-                        end
-                    end
-                    @constraint(
-                        model,
-                        (
-                            0.5 * eigvecs' * (U * Û' + Û * U') * eigvecs
-                            + 0.5 * S * ((U - Û)' * eigvecs + eigvecs' * (U - Û)) * S
-                            - eigvecs' * Y * eigvecs
-                        ) in PSDCone()
                     )
                 end
             end
@@ -2205,10 +2163,10 @@ function create_matrix_cut_child_nodes(
     # OR: eigvecs: (n, k) k most negative eigenvectors of U U' - Y
     # U: (n, k): previous fitted version of Û
     # directions: (k, ) vector of elements from {"left", "right"}
-    if !(disjunctive_cuts_type in ["linear", "linear2", "semidefinite"])
+    if !(disjunctive_cuts_type in ["linear", "linear2"])
         error("""
         Invalid input for disjunctive cuts type.
-        Disjunctive cuts type must be either "linear" or "linear2" or "semidefinite";
+        Disjunctive cuts type must be either "linear" or "linear2";
         $disjunctive_cuts_type supplied instead.
         """)
     end
@@ -2258,29 +2216,6 @@ function create_matrix_cut_child_nodes(
             for (ind, directions) in enumerate(
                 Iterators.product(repeat([["left", "middle", "right"]], k)...)
             )
-        )
-    elseif disjunctive_cuts_type == "semidefinite"
-        eigvals, eigvecs, _ = eigs(U * U' - Y, nev=k, which=:SR, tol=1e-6)
-        return (
-            BBNode(
-                U_lower = U_lower,
-                U_upper = U_upper,
-                matrix_cuts = vcat(matrix_cuts, [(eigvecs, U, directions)]),
-                # initialize a node's LB with the objective of relaxation of parent
-                LB = objective_relax,
-                depth = depth + 1,
-                node_id = counter + ind,
-                parent_id = node_id,
-            )
-            # V1
-            # for (ind, directions) in enumerate(
-            #     Iterators.product(repeat([["left", "right"]], k)...)
-            # )
-            # V2
-            for (ind, directions) in [
-                (1, repeat(["left"], k)),
-                (2, repeat(["right"], k)),
-            ]
         )
     end
 end
