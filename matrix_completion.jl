@@ -38,13 +38,14 @@ function branchandbound_frob_matrixcomp(
     γ::Float64,
     λ::Float64,
     ;
-    branching_region::String = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
-    branching_type::String = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
-    branch_point::String = "midpoint", # determine which value to branch on: either "midpoint" or "current_point"
+    branching_region::Union{String, Nothing} = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
+    branching_type::Union{String, Nothing} = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
+    branch_point::Union{String, Nothing} = "midpoint", # determine which value to branch on: either "midpoint" or "current_point"
     node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst"
     bestfirst_depthfirst_cutoff::Int = 10000,
     gap::Float64 = 1e-4, # optimality gap for algorithm (proportion)
-    use_matrix_cuts::Bool = true,
+    use_disjunctive_cuts::Bool = true,
+    disjunctive_cuts_type::String = "linear",
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     use_max_steps::Bool = false,
@@ -52,7 +53,6 @@ function branchandbound_frob_matrixcomp(
     time_limit::Int = 3600, # time limit in seconds
     update_step::Int = 1000,
 )
-
 
     function add_update!(
         printlist, instance, nodes_explored, counter, 
@@ -85,23 +85,33 @@ function branchandbound_frob_matrixcomp(
         return now_gap
     end
 
-    if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
-        error("""
-        Invalid input for branching region.
-        Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
-        """)
-    end
-    if !(branching_type in ["lexicographic", "bounds", "gradient"])
-        error("""
-        Invalid input for branching type.
-        Branching type must be either "lexicographic" or "bounds" or "gradient"; $branching_type supplied instead.
-        """)
-    end
-    if !(branch_point in ["midpoint", "current_point"])
-        error("""
-        Invalid input for branch point.
-        Branch point must be either "midpoint" or "current_point"; $branch_point supplied instead.
-        """)
+    if use_disjunctive_cuts
+        if !(disjunctive_cuts_type in ["linear", "semidefinite"])
+            error("""
+            Invalid input for disjunctive cuts type.
+            Disjunctive cuts type must be either "linear" or "semidefinite";
+            $disjunctive_cuts_type supplied instead.
+            """)
+        end
+    else
+        if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
+            error("""
+            Invalid input for branching region.
+            Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
+            """)
+        end
+        if !(branching_type in ["lexicographic", "bounds", "gradient"])
+            error("""
+            Invalid input for branching type.
+            Branching type must be either "lexicographic" or "bounds" or "gradient"; $branching_type supplied instead.
+            """)
+        end
+        if !(branch_point in ["midpoint", "current_point"])
+            error("""
+            Invalid input for branch point.
+            Branch point must be either "midpoint" or "current_point"; $branch_point supplied instead.
+            """)
+        end
     end
     if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst", "bestfirst_depthfirst"])
         error("""
@@ -125,21 +135,22 @@ function branchandbound_frob_matrixcomp(
     printlist = [
         Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), "\n",
         "Starting branch-and-bound on a matrix completion problem.\n",
-        Printf.@sprintf("k:                 %15d\n", k),
-        Printf.@sprintf("m:                 %15d\n", m),
-        Printf.@sprintf("n:                 %15d\n", n),
-        Printf.@sprintf("num_indices:       %15d\n", sum(indices)),
-        Printf.@sprintf("γ:                 %15g\n", γ),
-        Printf.@sprintf("λ:                 %15g\n", λ),
-        Printf.@sprintf("Branching region:  %15s\n", branching_region),
-        Printf.@sprintf("Branching type:    %15s\n", branching_type),
-        Printf.@sprintf("Branching point:   %15s\n", branch_point),
-        Printf.@sprintf("Node selection:    %15s\n", node_selection),
-        Printf.@sprintf("Use matrix cuts?:  %15s\n", use_matrix_cuts),
-        Printf.@sprintf("Optimality gap:    %15g\n", gap),
-        Printf.@sprintf("Cap on nodes?      %15s\n", use_max_steps),
-        Printf.@sprintf("Maximum nodes:     %15d\n", max_steps),
-        Printf.@sprintf("Time limit (s):    %15d\n", time_limit),
+        Printf.@sprintf("k:                        %15d\n", k),
+        Printf.@sprintf("m:                        %15d\n", m),
+        Printf.@sprintf("n:                        %15d\n", n),
+        Printf.@sprintf("num_indices:              %15d\n", sum(indices)),
+        Printf.@sprintf("γ:                        %15g\n", γ),
+        Printf.@sprintf("λ:                        %15g\n", λ),
+        Printf.@sprintf("Branching region:         %15s\n", branching_region),
+        Printf.@sprintf("Branching type:           %15s\n", branching_type),
+        Printf.@sprintf("Branching point:          %15s\n", branch_point),
+        Printf.@sprintf("Node selection:           %15s\n", node_selection),
+        Printf.@sprintf("Use disjunctive cuts?:    %15s\n", use_disjunctive_cuts),
+        Printf.@sprintf("Disjunctive cuts type:    %15s\n", disjunctive_cuts_type),
+        Printf.@sprintf("Optimality gap:           %15g\n", gap),
+        Printf.@sprintf("Cap on nodes?             %15s\n", use_max_steps),
+        Printf.@sprintf("Maximum nodes:            %15d\n", max_steps),
+        Printf.@sprintf("Time limit (s):           %15d\n", time_limit),
         "-----------------------------------------------------------------------------------\n",
         "|   Explored |      Total |      Lower |      Upper |        Gap |    Runtime (s) |\n",
         "-----------------------------------------------------------------------------------\n",
@@ -204,7 +215,7 @@ function branchandbound_frob_matrixcomp(
     X_initial = altmin_results["U"] * altmin_results["V"]
     U_initial = svd(X_initial).U[:,1:k]
     Y_initial = U_initial * U_initial'
-    objective_initial = objective_function(
+    objective_initial = evaluate_objective(
         X_initial, A, indices, U_initial, γ, λ,
     )
     MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
@@ -233,7 +244,7 @@ function branchandbound_frob_matrixcomp(
     nodes = []
     upper = objective_initial
     lower = -Inf
-    if branching_region == "box"
+    if use_disjunctive_cuts
         U_lower_initial = -ones(n, k)
         U_lower_initial[n,:] .= 0.0
         U_upper_initial = ones(n, k)
@@ -246,17 +257,32 @@ function branchandbound_frob_matrixcomp(
             node_id = 1,
             parent_id = 0,
         )
-    elseif branching_region in ["angular", "polyhedral", "hybrid"]
-        φ_lower_initial = zeros(n-1, k)
-        φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
-        initial_node = BBNode(
-            φ_lower = φ_lower_initial, 
-            φ_upper = φ_upper_initial, 
-            LB = lower,
-            depth = 0,
-            node_id = 1,
-            parent_id = 0,
-        )
+    else
+        if branching_region == "box"
+            U_lower_initial = -ones(n, k)
+            U_lower_initial[n,:] .= 0.0
+            U_upper_initial = ones(n, k)
+            initial_node = BBNode(
+                U_lower = U_lower_initial, 
+                U_upper = U_upper_initial, 
+                matrix_cuts = [],
+                LB = lower,
+                depth = 0,
+                node_id = 1,
+                parent_id = 0,
+            )
+        elseif branching_region in ["angular", "polyhedral", "hybrid"]
+            φ_lower_initial = zeros(n-1, k)
+            φ_upper_initial = fill(convert(Float64, pi), (n-1, k))
+            initial_node = BBNode(
+                φ_lower = φ_lower_initial, 
+                φ_upper = φ_upper_initial, 
+                LB = lower,
+                depth = 0,
+                node_id = 1,
+                parent_id = 0,
+            )
+        end
     end
     push!(nodes, initial_node)
 
@@ -344,42 +370,46 @@ function branchandbound_frob_matrixcomp(
             break
         end
 
-        if branching_region == "box"
+        if use_disjunctive_cuts
             nothing
-        elseif branching_region == "angular"
-            # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
-            U_ranges_results = φ_ranges_to_U_ranges(
-                current_node.φ_lower, 
-                current_node.φ_upper,
-            )
-            current_node.U_lower = U_ranges_results["U_lower"]
-            current_node.U_upper = U_ranges_results["U_upper"]
-            solve_time_U_ranges += U_ranges_results["time_taken"]
-        elseif branching_region == "polyhedral"
-            polyhedra_results = φ_ranges_to_polyhedra(
-                current_node.φ_lower, 
-                current_node.φ_upper, 
-                false,
-            )
-            polyhedra = polyhedra_results["polyhedra"]
-            solve_time_polyhedra += polyhedra_results["time_taken"]
-        elseif branching_region == "hybrid"
-            φ_lower = current_node.φ_lower
-            φ_upper = current_node.φ_upper
-            U_ranges_results = φ_ranges_to_U_ranges(
-                current_node.φ_lower, 
-                current_node.φ_upper,
-            )
-            current_node.U_lower = U_ranges_results["U_lower"]
-            current_node.U_upper = U_ranges_results["U_upper"]
-            solve_time_U_ranges += U_ranges_results["time_taken"]
-            polyhedra_results = φ_ranges_to_polyhedra(
-                current_node.φ_lower, 
-                current_node.φ_upper, 
-                true,
-            )
-            polyhedra = polyhedra_results["polyhedra"]
-            solve_time_polyhedra += polyhedra_results["time_taken"]
+        else
+            if branching_region == "box"
+                nothing
+            elseif branching_region == "angular"
+                # TODO: conduct feasibility check on (φ_lower, φ_upper) directly
+                U_ranges_results = φ_ranges_to_U_ranges(
+                    current_node.φ_lower, 
+                    current_node.φ_upper,
+                )
+                current_node.U_lower = U_ranges_results["U_lower"]
+                current_node.U_upper = U_ranges_results["U_upper"]
+                solve_time_U_ranges += U_ranges_results["time_taken"]
+            elseif branching_region == "polyhedral"
+                polyhedra_results = φ_ranges_to_polyhedra(
+                    current_node.φ_lower, 
+                    current_node.φ_upper, 
+                    false,
+                )
+                polyhedra = polyhedra_results["polyhedra"]
+                solve_time_polyhedra += polyhedra_results["time_taken"]
+            elseif branching_region == "hybrid"
+                φ_lower = current_node.φ_lower
+                φ_upper = current_node.φ_upper
+                U_ranges_results = φ_ranges_to_U_ranges(
+                    current_node.φ_lower, 
+                    current_node.φ_upper,
+                )
+                current_node.U_lower = U_ranges_results["U_lower"]
+                current_node.U_upper = U_ranges_results["U_upper"]
+                solve_time_U_ranges += U_ranges_results["time_taken"]
+                polyhedra_results = φ_ranges_to_polyhedra(
+                    current_node.φ_lower, 
+                    current_node.φ_upper, 
+                    true,
+                )
+                polyhedra = polyhedra_results["polyhedra"]
+                solve_time_polyhedra += polyhedra_results["time_taken"]
+            end
         end
 
         split_flag = true
@@ -391,21 +421,24 @@ function branchandbound_frob_matrixcomp(
             nodes_dominated += 1
         end
 
-        if !use_matrix_cuts && split_flag
+        if !use_disjunctive_cuts && split_flag
             if branching_region in ["box", "angular"]
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, branching_region;
+                    n, k;
+                    branching_region = branching_region,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                 )
             elseif branching_region == "polyhedral"
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, branching_region;
+                    n, k;
+                    branching_region = branching_region,
                     polyhedra = polyhedra,
                 )
             elseif branching_region == "hybrid"
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k, branching_region;
+                    n, k;
+                    branching_region = branching_region,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                     polyhedra = polyhedra,
@@ -421,34 +454,45 @@ function branchandbound_frob_matrixcomp(
         # solve SDP relaxation of master problem
         if split_flag
             matrix_cuts = nothing
-            if use_matrix_cuts
+            if use_disjunctive_cuts
                 matrix_cuts = current_node.matrix_cuts
-            end               
-            if branching_region == "box"
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, branching_region, A, indices, γ, λ; 
+                    n, k, A, indices, γ, λ, use_disjunctive_cuts;
+                    disjunctive_cuts_type = disjunctive_cuts_type,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                     matrix_cuts = matrix_cuts,
                 )
-            elseif branching_region == "angular"
-                relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, branching_region, A, indices, γ, λ; 
-                    U_lower = current_node.U_lower, 
-                    U_upper = current_node.U_upper,
-                )
-            elseif branching_region == "polyhedral"
-                relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, branching_region, A, indices, γ, λ; 
-                    polyhedra = polyhedra,
-                )
-            elseif branching_region == "hybrid"
-                relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, branching_region, A, indices, γ, λ; 
-                    U_lower = current_node.U_lower, 
-                    U_upper = current_node.U_upper, 
-                    polyhedra = polyhedra,
-                )
+            else               
+                if branching_region == "box"
+                    relax_result = @suppress relax_frob_matrixcomp(
+                        n, k, A, indices, γ, λ, use_disjunctive_cuts; 
+                        branching_region = branching_region, 
+                        U_lower = current_node.U_lower, 
+                        U_upper = current_node.U_upper,
+                    )
+                elseif branching_region == "angular"
+                    relax_result = @suppress relax_frob_matrixcomp(
+                        n, k, A, indices, γ, λ, use_disjunctive_cuts; 
+                        branching_region = branching_region, 
+                        U_lower = current_node.U_lower, 
+                        U_upper = current_node.U_upper,
+                    )
+                elseif branching_region == "polyhedral"
+                    relax_result = @suppress relax_frob_matrixcomp(
+                        n, k, A, indices, γ, λ, use_disjunctive_cuts; 
+                        branching_region = branching_region, 
+                        polyhedra = polyhedra,
+                    )
+                elseif branching_region == "hybrid"
+                    relax_result = @suppress relax_frob_matrixcomp(
+                        n, k, A, indices, γ, λ, use_disjunctive_cuts; 
+                        branching_region = branching_region,
+                        U_lower = current_node.U_lower, 
+                        U_upper = current_node.U_upper, 
+                        polyhedra = polyhedra,
+                    )
+                end
             end
             solve_time_relaxation += relax_result["solve_time"]
             push!(
@@ -491,7 +535,7 @@ function branchandbound_frob_matrixcomp(
         # prune this node;
         # if it is the best found so far, update solution
         if split_flag
-            if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, X_relax, Θ_relax, use_matrix_cuts)
+            if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, X_relax, Θ_relax, use_disjunctive_cuts)
                 nodes_master_feasible += 1
                 # if best found so far, update solution
                 if objective_relax < solution["objective"]
@@ -540,7 +584,7 @@ function branchandbound_frob_matrixcomp(
                 Y_local = U_local * U_local'
                 # guaranteed to be a projection matrix since U_local is a svd result
                 
-                objective_local = objective_function(
+                objective_local = evaluate_objective(
                     X_local, A, indices, U_local, γ, λ,
                 )
 
@@ -566,22 +610,22 @@ function branchandbound_frob_matrixcomp(
             # branch on variable
             # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
             nodes_relax_feasible_split += 1
-            if branching_region == "box"
-                if use_matrix_cuts
-                    append!(nodes, 
-                        collect(create_matrix_cut_child_nodes(
-                            Y_relax, U_relax,
-                            current_node.U_lower, current_node.U_upper,
-                            current_node.matrix_cuts,
-                            counter, 
-                            current_node.depth,
-                            current_node.node_id, 
-                            objective_relax,
-                        ))
-                    )
-                    ancestry[current_node.node_id] = [counter + i for i in 1:2^k]
-                    counter += 2^k
-                else
+            if use_disjunctive_cuts
+                matrix_cut_child_nodes = collect(create_matrix_cut_child_nodes(
+                    disjunctive_cuts_type,
+                    Y_relax, U_relax,
+                    current_node.U_lower, current_node.U_upper,
+                    current_node.matrix_cuts,
+                    counter,
+                    current_node.depth,
+                    current_node.node_id,
+                    objective_relax,
+                ))
+                append!(nodes, matrix_cut_child_nodes)
+                ancestry[current_node.node_id] = [counter + i for i in 1:length(matrix_cut_child_nodes)]
+                counter += length(matrix_cut_child_nodes)
+            else
+                if branching_region == "box"
                     # preliminaries: defaulting to branching_type
                     
                     # finding coordinates (i, j) to branch on
@@ -661,109 +705,109 @@ function branchandbound_frob_matrixcomp(
                     push!(nodes, left_child_node, right_child_node)
                     ancestry[current_node.node_id] = [counter + 1, counter + 2]
                     counter += 2
-                end
-            elseif branching_region in ["angular", "polyhedral", "hybrid"]
-                φ_relax = zeros(n-1, k)
-                for j in 1:k
-                    φ_relax[:,j] = U_col_to_φ_col(U_relax[:,j])
-                end
-                # if !all(current_node.φ_lower .≤ φ_relax .≤ current_node.φ_upper)
-                #     println(current_node.φ_lower)
-                #     println(φ_relax)
-                #     println(current_node.φ_upper)
-                #     error("""""")
-                # end
-                # finding coordinates (i, j) to branch on
-                if (
-                    branching_type == "lexicographic"
-                    ||
-                    any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
-                )
-                    (_, ind) = findmax(current_node.φ_upper - current_node.φ_lower)
-                elseif branching_type == "bounds" # TODO: UNTESTED
-                    # error("""
-                    # Branching type "box" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
-                    # """)
-                    (_, ind) = findmin(
-                        min.(
-                            # WARNING: it's possible for φ_relax to be outside the ranges elementwise
-                            current_node.φ_upper - φ_relax,
-                            φ_relax - current_node.φ_lower,
-                        ) ./ (
-                            current_node.φ_upper - current_node.φ_lower
-                        )
-                    )
-                elseif branching_type == "gradient"
-                    deriv_U = - γ * α_relax * α_relax' * U_relax # shape: (n, k)
-                    deriv_φ = zeros(n-1, k)
+                elseif branching_region in ["angular", "polyhedral", "hybrid"]
+                    φ_relax = zeros(n-1, k)
                     for j in 1:k
-                        deriv_φ[:,j] = compute_jacobian(φ_relax[:,j])' * deriv_U[:,j]
+                        φ_relax[:,j] = U_col_to_φ_col(U_relax[:,j])
                     end
-                    deriv_φ_change = zeros(n-1,k)
-                    for i in 1:n-1, j in 1:k
-                        if deriv_φ[i,j] < 0.0
-                            deriv_φ_change[i,j] = deriv_φ[i,j] * (
-                                current_node.φ_upper[i,j] - φ_relax[i,j]
+                    # if !all(current_node.φ_lower .≤ φ_relax .≤ current_node.φ_upper)
+                    #     println(current_node.φ_lower)
+                    #     println(φ_relax)
+                    #     println(current_node.φ_upper)
+                    #     error("""""")
+                    # end
+                    # finding coordinates (i, j) to branch on
+                    if (
+                        branching_type == "lexicographic"
+                        ||
+                        any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
+                    )
+                        (_, ind) = findmax(current_node.φ_upper - current_node.φ_lower)
+                    elseif branching_type == "bounds" # TODO: UNTESTED
+                        # error("""
+                        # Branching type "box" not yet implemented for "angular", "polyhedral", or "hybrid" branching regions.
+                        # """)
+                        (_, ind) = findmin(
+                            min.(
+                                # WARNING: it's possible for φ_relax to be outside the ranges elementwise
+                                current_node.φ_upper - φ_relax,
+                                φ_relax - current_node.φ_lower,
+                            ) ./ (
+                                current_node.φ_upper - current_node.φ_lower
                             )
-                        else
-                            deriv_φ_change[i,j] = deriv_φ[i,j] * (
-                                current_node.φ_lower[i,j] - φ_relax[i,j]
-                            )
+                        )
+                    elseif branching_type == "gradient"
+                        deriv_U = - γ * α_relax * α_relax' * U_relax # shape: (n, k)
+                        deriv_φ = zeros(n-1, k)
+                        for j in 1:k
+                            deriv_φ[:,j] = compute_jacobian(φ_relax[:,j])' * deriv_U[:,j]
                         end
+                        deriv_φ_change = zeros(n-1,k)
+                        for i in 1:n-1, j in 1:k
+                            if deriv_φ[i,j] < 0.0
+                                deriv_φ_change[i,j] = deriv_φ[i,j] * (
+                                    current_node.φ_upper[i,j] - φ_relax[i,j]
+                                )
+                            else
+                                deriv_φ_change[i,j] = deriv_φ[i,j] * (
+                                    current_node.φ_lower[i,j] - φ_relax[i,j]
+                                )
+                            end
+                        end
+                        (_, ind) = findmin(deriv_φ_change)
                     end
-                    (_, ind) = findmin(deriv_φ_change)
-                end
-                # finding branch_val
-                if (
-                    any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
-                    || # it's possible for φ_relax to be outside the ranges elementwise
-                    current_node.φ_lower[ind] > φ_relax[ind]
-                    ||
-                    φ_relax[ind] > current_node.φ_upper[ind]
-                )
-                    diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
-                    branch_val = current_node.φ_lower[ind] + diff / 2
-                elseif branching_type == "bounds"
-                    if (current_node.φ_upper[ind] - φ_relax[ind] < 
-                        φ_relax[ind] - current_node.φ_lower[ind])
-                        branch_val = φ_relax[ind] - (current_node.φ_upper[ind] - φ_relax[ind])
-                    else
-                        branch_val = φ_relax[ind] + (φ_relax[ind] - current_node.φ_lower[ind])
+                    # finding branch_val
+                    if (
+                        any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
+                        || # it's possible for φ_relax to be outside the ranges elementwise
+                        current_node.φ_lower[ind] > φ_relax[ind]
+                        ||
+                        φ_relax[ind] > current_node.φ_upper[ind]
+                    )
+                        diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
+                        branch_val = current_node.φ_lower[ind] + diff / 2
+                    elseif branching_type == "bounds"
+                        if (current_node.φ_upper[ind] - φ_relax[ind] <  
+                            φ_relax[ind] - current_node.φ_lower[ind])
+                            branch_val = φ_relax[ind] - (current_node.φ_upper[ind] - φ_relax[ind])
+                        else
+                            branch_val = φ_relax[ind] + (φ_relax[ind] - current_node.φ_lower[ind])
+                        end
+                    elseif branch_point == "midpoint"
+                        diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
+                        branch_val = current_node.φ_lower[ind] + diff / 2
+                    elseif branch_point == "current_point"
+                        branch_val = φ_relax[ind]
                     end
-                elseif branch_point == "midpoint"
-                    diff = current_node.φ_upper[ind] - current_node.φ_lower[ind]
-                    branch_val = current_node.φ_lower[ind] + diff / 2
-                elseif branch_point == "current_point"
-                    branch_val = φ_relax[ind]
+                    # constructing child nodes
+                    φ_lower_left = current_node.φ_lower
+                    φ_upper_left = copy(current_node.φ_upper)
+                    φ_upper_left[ind] = branch_val
+                    φ_lower_right = copy(current_node.φ_lower)
+                    φ_lower_right[ind] = branch_val
+                    φ_upper_right = current_node.φ_upper
+                    left_child_node = BBNode(
+                        φ_lower = φ_lower_left,
+                        φ_upper = φ_upper_left,
+                        # initialize a node's LB with the objective of relaxation of parent
+                        LB = objective_relax,
+                        depth = current_node.depth + 1,
+                        node_id = counter + 1,
+                        parent_id = current_node.node_id,
+                    )
+                    right_child_node = BBNode(
+                        φ_lower = φ_lower_right,
+                        φ_upper = φ_upper_right,
+                        # initialize a node's LB with the objective of relaxation of parent
+                        LB = objective_relax,
+                        depth = current_node.depth + 1,
+                        node_id = counter + 2,
+                        parent_id = current_node.node_id,
+                    )
+                    push!(nodes, left_child_node, right_child_node)
+                    ancestry[current_node.node_id] = [counter + 1, counter + 2]
+                    counter += 2
                 end
-                # constructing child nodes
-                φ_lower_left = current_node.φ_lower
-                φ_upper_left = copy(current_node.φ_upper)
-                φ_upper_left[ind] = branch_val
-                φ_lower_right = copy(current_node.φ_lower)
-                φ_lower_right[ind] = branch_val
-                φ_upper_right = current_node.φ_upper
-                left_child_node = BBNode(
-                    φ_lower = φ_lower_left,
-                    φ_upper = φ_upper_left,
-                    # initialize a node's LB with the objective of relaxation of parent
-                    LB = objective_relax,
-                    depth = current_node.depth + 1,
-                    node_id = counter + 1,
-                    parent_id = current_node.node_id,
-                )
-                right_child_node = BBNode(
-                    φ_lower = φ_lower_right,
-                    φ_upper = φ_upper_right,
-                    # initialize a node's LB with the objective of relaxation of parent
-                    LB = objective_relax,
-                    depth = current_node.depth + 1,
-                    node_id = counter + 2,
-                    parent_id = current_node.node_id,
-                )
-                push!(nodes, left_child_node, right_child_node)
-                ancestry[current_node.node_id] = [counter + 1, counter + 2]
-                counter += 2
             end
         end
 
@@ -845,7 +889,8 @@ function branchandbound_frob_matrixcomp(
         "branching_type" => branching_type,
         "branch_point" => branch_point,
         "node_selection" => node_selection,
-        "use_matrix_cuts" => use_matrix_cuts,
+        "use_disjunctive_cuts" => use_disjunctive_cuts,
+        "disjunctive_cuts_type" => disjunctive_cuts_type,
         "optimality_gap" => gap,
         "use_max_steps" => use_max_steps,
         "max_steps" => max_steps,
@@ -945,7 +990,6 @@ function branchandbound_frob_matrixcomp(
     )
 
     return solution, printlist, instance
-
 end
 
 function master_problem_frob_matrixcomp_feasible(
@@ -953,13 +997,13 @@ function master_problem_frob_matrixcomp_feasible(
     U::Matrix{Float64}, 
     X::Matrix{Float64}, 
     Θ::Matrix{Float64}, 
-    use_matrix_cuts::Bool,
+    use_disjunctive_cuts::Bool,
     ;
     orthogonality_tolerance::Float64 = 0.0,
     projection_tolerance::Float64 = 1e-6, # needs to be greater than 0 because of Arpack library
     lifted_variable_tolerance::Float64 = 1e-6, # needs to be greater than 0 because of Arpack library
 )
-    if use_matrix_cuts
+    if use_disjunctive_cuts
         return (
             eigs(Symmetric(U * U' - Y), nev=1, which=:SR, tol=1e-6)[1][1]
             ≥ 
@@ -984,8 +1028,8 @@ end
 function relax_feasibility_frob_matrixcomp( # this is the version without matrix_cuts
     n::Int,
     k::Int,
-    branching_region::String,
     ;
+    branching_region::String = "box",
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
         U_lower[end,:] .= 0.0
@@ -1135,12 +1179,14 @@ end
 function relax_frob_matrixcomp(
     n::Int,
     k::Int,
-    branching_region::String,
     A::Array{Float64,2},
     indices::Array{Float64,2},
     γ::Float64,
     λ::Float64,
+    use_disjunctive_cuts::Bool,
     ;
+    branching_region::Union{String, Nothing} = nothing,
+    disjunctive_cuts_type::Union{String, Nothing} = nothing,
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
         U_lower[end,:] .= 0.0
@@ -1175,12 +1221,23 @@ function relax_frob_matrixcomp(
         return α
     end
 
-    if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
-        error("""
-        Invalid input for branching region.
-        Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
-        """)
+    if use_disjunctive_cuts
+        if !(disjunctive_cuts_type in ["linear", "semidefinite"])
+            error("""
+            Invalid input for disjunctive cuts type.
+            Disjunctive cuts type must be either "linear" or "semidefinite";
+            $disjunctive_cuts_type supplied instead.
+            """)
+        end
+    else
+        if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
+            error("""
+            Invalid input for branching region.
+            Branching region must be either "box" or "angular" or "polyhedral" or "hybrid"; $branching_region supplied instead.
+            """)
+        end
     end
+    
     if !(
         size(U_lower) == (n,k)
         && size(U_upper) == (n,k)
@@ -1208,13 +1265,11 @@ function relax_frob_matrixcomp(
         set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     end
 
-    use_matrix_cuts = !isnothing(matrix_cuts)
-
     @variable(model, X[1:n, 1:m])
     @variable(model, Y[1:n, 1:n], Symmetric)
     @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
-    if !use_matrix_cuts
+    if !use_disjunctive_cuts
         @variable(model, t[1:n, 1:k, 1:k])
     end
 
@@ -1238,51 +1293,95 @@ function relax_frob_matrixcomp(
     end
 
     # matrix cuts on U, if supplied
-    if use_matrix_cuts 
+    if use_disjunctive_cuts 
         if length(matrix_cuts) > 0
-            @expression(
-                model,
-                matrix_cut[l=1:length(matrix_cuts)],
-                zero(AffExpr),
-            )
-            for (l, (x, Û, directions)) in enumerate(matrix_cuts)
-                for j in 1:k
-                    if directions[j] == "left"
-                        @constraint(
-                            model, 
-                            -1 ≤ Compat.dot(x, U[:,j]), 
-                        )
-                        @constraint(
-                            model, 
-                            Compat.dot(x, U[:,j])
-                            ≤ Compat.dot(x, Û[:,j]), 
-                        )
-                        add_to_expression!(
-                            matrix_cut[l],
-                            Û[:,j]' * x * x' * U[:,j]
-                            .+ Compat.dot(x, Û[:,j] - U[:,j])
-                        )
-                    elseif directions[j] == "right"
-                        @constraint(
-                            model,
-                            Compat.dot(x, Û[:,j]) 
-                            ≤ Compat.dot(x, U[:,j]),
-                        )
-                        @constraint(
-                            model,
-                            Compat.dot(x, U[:,j]) ≤ 1,
-                        )
-                        add_to_expression!(
-                            matrix_cut[l],
-                            Û[:,j]' * x * x' * U[:,j]
-                            .+ Compat.dot(x, U[:,j] - Û[:,j])
-                        )
-                    end
-                end
-                @constraint(
+            if disjunctive_cuts_type == "linear"        
+                @expression(
                     model,
-                    matrix_cut[l] ≥ Compat.dot((x * x'), Y),
+                    matrix_cut[l=1:length(matrix_cuts)],
+                    zero(AffExpr),
                 )
+                for (l, (eigvecs, Û, directions)) in enumerate(matrix_cuts)
+                    for j in 1:k
+                        if directions[j] == "left"
+                            @constraint(
+                                model, 
+                                -1 ≤ Compat.dot(eigvecs, U[:,j]), 
+                            )
+                            @constraint(
+                                model, 
+                                Compat.dot(eigvecs, U[:,j])
+                                ≤ Compat.dot(eigvecs, Û[:,j]), 
+                            )
+                            add_to_expression!(
+                                matrix_cut[l],
+                                Û[:,j]' * eigvecs * eigvecs' * U[:,j]
+                                .+ Compat.dot(eigvecs, Û[:,j] - U[:,j])
+                            )
+                        elseif directions[j] == "right"
+                            @constraint(
+                                model,
+                                Compat.dot(eigvecs, Û[:,j]) 
+                                ≤ Compat.dot(eigvecs, U[:,j]),
+                            )
+                            @constraint(
+                                model,
+                                Compat.dot(eigvecs, U[:,j]) ≤ 1,
+                            )
+                            add_to_expression!(
+                                matrix_cut[l],
+                                Û[:,j]' * eigvecs * eigvecs' * U[:,j]
+                                .+ Compat.dot(eigvecs, U[:,j] - Û[:,j])
+                            )
+                        end
+                    end
+                    @constraint(
+                        model,
+                        matrix_cut[l] ≥ Compat.dot((eigvecs * eigvecs'), Y),
+                    )
+                end
+            elseif disjunctive_cuts_type == "semidefinite"
+                for (l, (eigvecs, Û, directions)) in enumerate(matrix_cuts)
+                    for j in 1:k
+                        if directions[j] == "left"
+                            @constraint(
+                                model,
+                                -1 ≤ Compat.dot(eigvecs[:,j], U[:,j]),
+                            )
+                            @constraint(
+                                model, 
+                                Compat.dot(eigvecs[:,j], U[:,j])
+                                ≤ Compat.dot(eigvecs[:,j], Û[:,j]), 
+                            )
+                        elseif directions[j] == "right"
+                            @constraint(
+                                model,
+                                Compat.dot(eigvecs[:,j], Û[:,j]) 
+                                ≤ Compat.dot(eigvecs[:,j], U[:,j]),
+                            )
+                            @constraint(
+                                model,
+                                Compat.dot(eigvecs[:,j], U[:,j]) ≤ 1,
+                            )
+                        end
+                    end
+                    S = zeros(Float64, (k,k))
+                    for j in 1:k
+                        if directions[j] == "left"
+                            S[j,j] = -1.0
+                        elseif directions[j] == "right"
+                            S[j,j] = 1.0
+                        end
+                    end
+                    @constraint(
+                        model,
+                        (
+                            0.5 * eigvecs' * (U * Û' + Û * U') * eigvecs
+                            + 0.5 * S * ((U - Û)' * eigvecs + eigvecs' * (U - Û)) * S
+                            - eigvecs' * Y * eigvecs
+                        ) in PSDCone()
+                    )
+                end
             end
         end
     else
@@ -1346,7 +1445,7 @@ function relax_frob_matrixcomp(
                 )
             end
         end
-        
+
         @constraint(
             model,
             [i = 1:n, j1 = 2:k, j2 = 1:(j1-1)],
@@ -1572,7 +1671,7 @@ function alternating_minimization(
     )
 end
 
-function objective_function(
+function evaluate_objective(
     X::Array{Float64,2},
     A::Array{Float64,2},
     indices::Array{Float64,2},
@@ -2020,6 +2119,7 @@ function compute_jacobian(
 end
 
 function create_matrix_cut_child_nodes(
+    disjunctive_cuts_type::String,
     Y::Matrix{Float64},
     U::Matrix{Float64},
     U_lower::Matrix{Float64},
@@ -2031,8 +2131,17 @@ function create_matrix_cut_child_nodes(
     objective_relax::Float64,
 )
     # returns a tuple:
-    # x: (n,) most negative eigenvector of U U' - Y
-    # U: (n, k) 
+    # eigvecs: (n, 1) most negative eigenvector of U U' - Y
+    # OR: eigvecs: (n, k) k most negative eigenvectors of U U' - Y
+    # U: (n, k): previous fitted version of Û
+    # directions: (k, ) vector of elements from {"left", "right"}
+    if !(disjunctive_cuts_type in ["linear", "semidefinite"])
+        error("""
+        Invalid input for disjunctive cuts type.
+        Disjunctive cuts type must be either "linear" or "semidefinite";
+        $disjunctive_cuts_type supplied instead.
+        """)
+    end
     if !(
         size(U) == size(U_lower) == size(U_upper)
         && size(Y, 1) == size(U, 1)
@@ -2047,21 +2156,45 @@ function create_matrix_cut_child_nodes(
     end
     (n, k) = size(U)
     
-    _, x = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
-    
-    return (
-        BBNode(
-            U_lower = U_lower,
-            U_upper = U_upper,
-            matrix_cuts = vcat(matrix_cuts, [(x, U, directions)]),
-            # initialize a node's LB with the objective of relaxation of parent
-            LB = objective_relax,
-            depth = depth + 1,
-            node_id = counter + ind,
-            parent_id = node_id,
+    if disjunctive_cuts_type == "linear"
+        eigvals, eigvecs, _ = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
+        return (
+            BBNode(
+                U_lower = U_lower,
+                U_upper = U_upper,
+                matrix_cuts = vcat(matrix_cuts, [(eigvecs, U, directions)]),
+                # initialize a node's LB with the objective of relaxation of parent
+                LB = objective_relax,
+                depth = depth + 1,
+                node_id = counter + ind,
+                parent_id = node_id,
+            )
+            for (ind, directions) in enumerate(
+                Iterators.product(repeat([["left", "right"]], k)...)
+            )
         )
-        for (ind, directions) in enumerate(
-            Iterators.product(repeat([["left", "right"]], k)...)
+    elseif disjunctive_cuts_type == "semidefinite"
+        eigvals, eigvecs, _ = eigs(U * U' - Y, nev=k, which=:SR, tol=1e-6)
+        return (
+            BBNode(
+                U_lower = U_lower,
+                U_upper = U_upper,
+                matrix_cuts = vcat(matrix_cuts, [(eigvecs, U, directions)]),
+                # initialize a node's LB with the objective of relaxation of parent
+                LB = objective_relax,
+                depth = depth + 1,
+                node_id = counter + ind,
+                parent_id = node_id,
+            )
+            # V1
+            # for (ind, directions) in enumerate(
+            #     Iterators.product(repeat([["left", "right"]], k)...)
+            # )
+            # V2
+            for (ind, directions) in [
+                (1, repeat(["left"], k)),
+                (2, repeat(["right"], k)),
+            ]
         )
-    )
+    end
 end
