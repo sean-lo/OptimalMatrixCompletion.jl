@@ -159,7 +159,8 @@ function branchandbound_frob_matrixcomp(
         print(stdout, message)
     end
 
-    altmin_probability = 0.05 # TODO: make this adaptive
+    max_altmin_probability = 1.0
+    min_altmin_probability = 0.01
 
     instance = Dict()
     instance["run_log"] = DataFrame(
@@ -555,6 +556,10 @@ function branchandbound_frob_matrixcomp(
         end
 
         # perform alternating minimization heuristic
+        altmin_probability = max(
+            max_altmin_probability / (2^current_node.depth),
+            min_altmin_probability
+        )
         altmin_flag_now = altmin_flag && (rand() < altmin_probability)
         if split_flag
             if altmin_flag_now
@@ -895,7 +900,8 @@ function branchandbound_frob_matrixcomp(
         "use_max_steps" => use_max_steps,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
-        "altmin_probability" => altmin_probability,
+        "max_altmin_probability" => max_altmin_probability,
+        "min_altmin_probability" => min_altmin_probability,
         "log_time" => log_time,
         "start_time" => start_time,
         "end_time" => end_time,
