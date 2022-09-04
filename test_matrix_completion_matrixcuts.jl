@@ -24,6 +24,7 @@ function test_branchandbound_frob_matrixcomp(
     bestfirst_depthfirst_cutoff::Int = 10000,
     use_disjunctive_cuts::Bool = true,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
+    disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing,
     root_only::Bool = false,
     altmin_flag::Bool = true,
     use_max_steps::Bool = true,
@@ -38,6 +39,13 @@ function test_branchandbound_frob_matrixcomp(
             Invalid input for disjunctive cuts type.
             Disjunctive cuts type must be either "linear" or "linear2" or "semidefinite";
             $disjunctive_cuts_type supplied instead.
+            """)
+        end
+        if !(disjunctive_cuts_breakpoints in ["smallest_1_eigvec", "smallest_2_eigvec"])
+            error("""
+            Invalid input for disjunctive cuts breakpoints.
+            Disjunctive cuts type must be either "smallest_1_eigvec" or "smallest_2_eigvec";
+            $disjunctive_cuts_breakpoints supplied instead.
             """)
         end
     else
@@ -86,6 +94,7 @@ function test_branchandbound_frob_matrixcomp(
         bestfirst_depthfirst_cutoff = bestfirst_depthfirst_cutoff,
         use_disjunctive_cuts = use_disjunctive_cuts,
         disjunctive_cuts_type = disjunctive_cuts_type,
+        disjunctive_cuts_breakpoints = disjunctive_cuts_breakpoints,
         root_only = root_only,
         altmin_flag = altmin_flag,
         use_max_steps = use_max_steps,
@@ -535,6 +544,7 @@ r_5_1 = test_branchandbound_frob_matrixcomp(
     ;
     γ = 9.0, λ = 0.0,
     disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
     use_disjunctive_cuts = true,
     time_limit = 60,
 );
@@ -543,6 +553,7 @@ r_5_2 = test_branchandbound_frob_matrixcomp(
     ;
     γ = 9.0, λ = 0.0,
     disjunctive_cuts_type = "linear2",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
     use_disjunctive_cuts = true,
     time_limit = 60,
 ); # Benefit of using linear2: faster convergence
@@ -566,6 +577,74 @@ plot!(
 )
 
 
+
+# Alternative cuts for rank-2
+r_6_11b = test_branchandbound_frob_matrixcomp(
+    2, 15, 15, 150, 1,
+    ;
+    γ = 8.0, λ = 0.0,
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    node_selection = "breadthfirst",
+    use_disjunctive_cuts = true,
+    time_limit = 60,
+);
+println("# explored nodes: $(r_6_11b[3]["run_details"]["nodes_explored"])")
+println("# total nodes:    $(r_6_11b[3]["run_details"]["nodes_total"])")
+println("Lower bound:      $(r_6_11b[3]["run_log"][end,:lower])")
+println("Upper bound:      $(r_6_11b[3]["run_log"][end,:upper])")
+println("Gap:              $(r_6_11b[3]["run_log"][end,:gap])")
+println("Runtime:          $(r_6_11b[3]["run_details"]["time_taken"])")
+r_6_12b = test_branchandbound_frob_matrixcomp(
+    2, 15, 15, 150, 1,
+    ;
+    γ = 8.0, λ = 0.0,
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_2_eigvec",
+    node_selection = "breadthfirst",
+    use_disjunctive_cuts = true,
+    time_limit = 60,
+);
+println("# explored nodes: $(r_6_12b[3]["run_details"]["nodes_explored"])")
+println("# total nodes:    $(r_6_12b[3]["run_details"]["nodes_total"])")
+println("Lower bound:      $(r_6_12b[3]["run_log"][end,:lower])")
+println("Upper bound:      $(r_6_12b[3]["run_log"][end,:upper])")
+println("Gap:              $(r_6_12b[3]["run_log"][end,:gap])")
+println("Runtime:          $(r_6_12b[3]["run_details"]["time_taken"])") # Bad: does not help convergence
+
+
+r_6_21b = test_branchandbound_frob_matrixcomp(
+    2, 15, 15, 150, 1,
+    ;
+    γ = 8.0, λ = 0.0,
+    disjunctive_cuts_type = "linear2",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    node_selection = "breadthfirst",
+    use_disjunctive_cuts = true,
+    time_limit = 60,
+)
+println("# explored nodes: $(r_6_11b[3]["run_details"]["nodes_explored"])")
+println("# total nodes:    $(r_6_11b[3]["run_details"]["nodes_total"])")
+println("Lower bound:      $(r_6_11b[3]["run_log"][end,:lower])")
+println("Upper bound:      $(r_6_11b[3]["run_log"][end,:upper])")
+println("Gap:              $(r_6_11b[3]["run_log"][end,:gap])")
+println("Runtime:          $(r_6_11b[3]["run_details"]["time_taken"])")
+r_6_22b = test_branchandbound_frob_matrixcomp(
+    2, 15, 15, 150, 1,
+    ;
+    γ = 8.0, λ = 0.0,
+    disjunctive_cuts_type = "linear2",
+    disjunctive_cuts_breakpoints = "smallest_2_eigvec",
+    node_selection = "breadthfirst",
+    use_disjunctive_cuts = true,
+    time_limit = 60,
+);
+println("# explored nodes: $(r_6_12b[3]["run_details"]["nodes_explored"])")
+println("# total nodes:    $(r_6_12b[3]["run_details"]["nodes_total"])")
+println("Lower bound:      $(r_6_12b[3]["run_log"][end,:lower])")
+println("Upper bound:      $(r_6_12b[3]["run_log"][end,:upper])")
+println("Gap:              $(r_6_12b[3]["run_log"][end,:gap])")
+println("Runtime:          $(r_6_12b[3]["run_details"]["time_taken"])") # Bad: does not help convergence
 
 # Rank-2 tests
 

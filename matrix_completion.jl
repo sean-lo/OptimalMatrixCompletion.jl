@@ -46,6 +46,7 @@ function branchandbound_frob_matrixcomp(
     gap::Float64 = 1e-4, # optimality gap for algorithm (proportion)
     use_disjunctive_cuts::Bool = true,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
+    disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing, # either "smallest_1_eigvec" or "smallest_2_eigvec"
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     use_max_steps::Bool = false,
@@ -91,6 +92,13 @@ function branchandbound_frob_matrixcomp(
             Invalid input for disjunctive cuts type.
             Disjunctive cuts type must be either "linear" or "linear2";
             $disjunctive_cuts_type supplied instead.
+            """)
+        end
+        if !(disjunctive_cuts_breakpoints in ["smallest_1_eigvec", "smallest_2_eigvec"])
+            error("""
+            Invalid input for disjunctive cuts breakpoints.
+            Disjunctive cuts type must be either "smallest_1_eigvec" or "smallest_2_eigvec";
+            $disjunctive_cuts_breakpoints supplied instead.
             """)
         end
     else
@@ -618,6 +626,7 @@ function branchandbound_frob_matrixcomp(
             if use_disjunctive_cuts
                 matrix_cut_child_nodes = collect(create_matrix_cut_child_nodes(
                     disjunctive_cuts_type,
+                    disjunctive_cuts_breakpoints,
                     Y_relax, U_relax,
                     current_node.U_lower, current_node.U_upper,
                     current_node.matrix_cuts,
@@ -2148,6 +2157,7 @@ end
 
 function create_matrix_cut_child_nodes(
     disjunctive_cuts_type::String,
+    disjunctive_cuts_breakpoints::String,
     Y::Matrix{Float64},
     U::Matrix{Float64},
     U_lower::Matrix{Float64},
@@ -2170,6 +2180,13 @@ function create_matrix_cut_child_nodes(
         $disjunctive_cuts_type supplied instead.
         """)
     end
+    if !(disjunctive_cuts_breakpoints in ["smallest_1_eigvec", "smallest_2_eigvec"])
+        error("""
+        Invalid input for disjunctive cuts breakpoints.
+        Disjunctive cuts type must be either "smallest_1_eigvec" or "smallest_2_eigvec";
+        $disjunctive_cuts_breakpoints supplied instead.
+        """)
+    end
     if !(
         size(U) == size(U_lower) == size(U_upper)
         && size(Y, 1) == size(U, 1)
@@ -2184,38 +2201,41 @@ function create_matrix_cut_child_nodes(
     end
     (n, k) = size(U)
     
-    if disjunctive_cuts_type == "linear"
-        eigvals, eigvecs, _ = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
+    if disjunctive_cuts_type in ["linear", "linear2"]
+        if disjunctive_cuts_breakpoints == "smallest_1_eigvec"
+            eigvals, eigvecs, _ = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
+            breakpoint_vec = eigvecs[:,1]
+        elseif disjunctive_cuts_breakpoints == "smallest_2_eigvec"
+            eigvals, eigvecs, _ = eigs(U * U' - Y, nev=2, which=:SR, tol=1e-6)
+            if eigvals[2] < -1e-10
+                weights = abs.(eigvals[1:2]) ./ sqrt(sum(eigvals[1:2].^2))
+                breakpoint_vec = weights[1] * eigvecs[:,1] + weights[2] * eigvecs[:,2]
+                println("Found 2 negative eigenvectors! $(eigvals[1:2])")
+            else
+                breakpoint_vec = eigvecs[:,1]
+            end
+        end
+        if disjunctive_cuts_type == "linear"
+            directions_list = enumerate(
+                Iterators.product(repeat([["left", "right"]], k)...)
+            )
+        elseif disjunctive_cuts_type == "linear2"
+            directions_list = enumerate(
+                Iterators.product(repeat([["left", "middle", "right"]], k)...)
+            )
+        end
         return (
             BBNode(
                 U_lower = U_lower,
                 U_upper = U_upper,
-                matrix_cuts = vcat(matrix_cuts, [(eigvecs, U, directions)]),
+                matrix_cuts = vcat(matrix_cuts, [(breakpoint_vec, U, directions)]),
                 # initialize a node's LB with the objective of relaxation of parent
                 LB = objective_relax,
                 depth = depth + 1,
                 node_id = counter + ind,
                 parent_id = node_id,
             )
-            for (ind, directions) in enumerate(
-                Iterators.product(repeat([["left", "right"]], k)...)
-            )
-        )
-    elseif disjunctive_cuts_type == "linear2"
-        eigvals, eigvecs, _ = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
-        return (
-            BBNode(
-                U_lower = U_lower,
-                U_upper = U_upper,
-                matrix_cuts = vcat(matrix_cuts, [(eigvecs, U, directions)]),
-                LB = objective_relax,
-                depth = depth + 1,
-                node_id = counter + ind,
-                parent_id = node_id,
-            )
-            for (ind, directions) in enumerate(
-                Iterators.product(repeat([["left", "middle", "right"]], k)...)
-            )
+            for (ind, directions) in directions_list
         )
     end
 end
