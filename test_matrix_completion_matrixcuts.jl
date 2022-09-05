@@ -34,10 +34,10 @@ function test_branchandbound_frob_matrixcomp(
     with_log::Bool = true,
 )
     if use_disjunctive_cuts
-        if !(disjunctive_cuts_type in ["linear", "linear2", "semidefinite"])
+        if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
             error("""
             Invalid input for disjunctive cuts type.
-            Disjunctive cuts type must be either "linear" or "linear2" or "semidefinite";
+            Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
             $disjunctive_cuts_type supplied instead.
             """)
         end
@@ -727,3 +727,65 @@ test_branchandbound_frob_matrixcomp(
     node_selection = "breadthfirst",
     time_limit = 60,
 ) # Bad: does not converge after altmin
+
+
+# Joint linearization tests
+r = test_branchandbound_frob_matrixcomp(
+    1, 15, 15, 45, 0,
+    ;
+    use_disjunctive_cuts = true,
+    γ = 40.0, λ = 0.0,
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    time_limit = 60,
+)
+
+r = test_branchandbound_frob_matrixcomp(
+    1, 15, 15, 45, 0,
+    ;
+    use_disjunctive_cuts = true,
+    γ = 40.0, λ = 0.0,
+    disjunctive_cuts_type = "linear2",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    time_limit = 60,
+)
+
+test_branchandbound_frob_matrixcomp(
+    1, 15, 15, 45, 0,
+    ;
+    use_disjunctive_cuts = true,
+    γ = 40.0, λ = 0.0,
+    disjunctive_cuts_type = "linear_all",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    time_limit = 60,
+)
+
+r = test_branchandbound_frob_matrixcomp(
+    2, 15, 15, 125, 0,
+    ;
+    use_disjunctive_cuts = true,
+    γ = 40.0, λ = 0.0,
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    time_limit = 60,
+)
+
+r = test_branchandbound_frob_matrixcomp(
+    2, 15, 15, 125, 0,
+    ;
+    use_disjunctive_cuts = true,
+    γ = 40.0, λ = 0.0,
+    disjunctive_cuts_type = "linear2",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    time_limit = 60,
+)
+
+r = test_branchandbound_frob_matrixcomp(
+    2, 15, 15, 125, 0,
+    ;
+    use_disjunctive_cuts = true,
+    γ = 40.0, λ = 0.0,
+    disjunctive_cuts_type = "linear_all",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    time_limit = 60,
+)

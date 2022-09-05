@@ -87,10 +87,10 @@ function branchandbound_frob_matrixcomp(
     end
 
     if use_disjunctive_cuts
-        if !(disjunctive_cuts_type in ["linear", "linear2"])
+        if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
             error("""
             Invalid input for disjunctive cuts type.
-            Disjunctive cuts type must be either "linear" or "linear2";
+            Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
             $disjunctive_cuts_type supplied instead.
             """)
         end
@@ -255,7 +255,12 @@ function branchandbound_frob_matrixcomp(
     lower = -Inf
     if use_disjunctive_cuts
         U_lower_initial = -ones(n, k)
-        U_lower_initial[n,:] .= 0.0
+        # Symmetry-breaking constraints
+        for i in 1:n, j in 1:k
+            if i+j ≥ n+1
+                U_lower_initial[i,j] = 0.0
+            end
+        end
         U_upper_initial = ones(n, k)
         initial_node = BBNode(
             U_lower = U_lower_initial, 
@@ -269,7 +274,12 @@ function branchandbound_frob_matrixcomp(
     else
         if branching_region == "box"
             U_lower_initial = -ones(n, k)
-            U_lower_initial[n,:] .= 0.0
+            # Symmetry-breaking constraints
+            for i in 1:n, j in 1:k
+                if i+j ≥ n+1
+                    U_lower_initial[i,j] = 0.0
+                end
+            end
             U_upper_initial = ones(n, k)
             initial_node = BBNode(
                 U_lower = U_lower_initial, 
@@ -1237,10 +1247,10 @@ function relax_frob_matrixcomp(
     end
 
     if use_disjunctive_cuts
-        if !(disjunctive_cuts_type in ["linear", "linear2"])
+        if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
             error("""
             Invalid input for disjunctive cuts type.
-            Disjunctive cuts type must be either "linear" or "linear2";
+            Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
             $disjunctive_cuts_type supplied instead.
             """)
         end
@@ -1316,45 +1326,45 @@ function relax_frob_matrixcomp(
                     matrix_cut[l=1:length(matrix_cuts)],
                     zero(AffExpr),
                 )
-                for (l, (eigvecs, Û, directions)) in enumerate(matrix_cuts)
+                for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
                     for j in 1:k
                         if directions[j] == "left"
                             @constraint(
                                 model, 
-                                -1 ≤ Compat.dot(eigvecs, U[:,j]), 
+                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]), 
                             )
                             @constraint(
                                 model, 
-                                Compat.dot(eigvecs, U[:,j])
-                                ≤ Compat.dot(eigvecs, Û[:,j]), 
+                                Compat.dot(breakpoint_vec, U[:,j])
+                                ≤ Compat.dot(breakpoint_vec, Û[:,j]), 
                             )
                             add_to_expression!(
                                 matrix_cut[l],
-                                - Compat.dot(U[:,j], eigvecs)
-                                + Compat.dot(eigvecs, Û[:,j]) * Compat.dot(U[:,j], eigvecs)
-                                + Compat.dot(eigvecs, Û[:,j]),
+                                - Compat.dot(U[:,j], breakpoint_vec)
+                                + Compat.dot(breakpoint_vec, Û[:,j]) * Compat.dot(U[:,j], breakpoint_vec)
+                                + Compat.dot(breakpoint_vec, Û[:,j]),
                             )
                         elseif directions[j] == "right"
                             @constraint(
                                 model,
-                                Compat.dot(eigvecs, Û[:,j]) 
-                                ≤ Compat.dot(eigvecs, U[:,j]),
+                                Compat.dot(breakpoint_vec, Û[:,j]) 
+                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
                             )
                             @constraint(
                                 model,
-                                Compat.dot(eigvecs, U[:,j]) ≤ 1,
+                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
                             )
                             add_to_expression!(
                                 matrix_cut[l],
-                                + Compat.dot(U[:,j], eigvecs)
-                                + Compat.dot(eigvecs, Û[:,j]) * Compat.dot(U[:,j], eigvecs)
-                                - Compat.dot(eigvecs, Û[:,j]),
+                                + Compat.dot(U[:,j], breakpoint_vec)
+                                + Compat.dot(breakpoint_vec, Û[:,j]) * Compat.dot(U[:,j], breakpoint_vec)
+                                - Compat.dot(breakpoint_vec, Û[:,j]),
                             )
                         end
                     end
                     @constraint(
                         model,
-                        matrix_cut[l] ≥ Compat.dot((eigvecs * eigvecs'), Y),
+                        matrix_cut[l] ≥ Compat.dot((breakpoint_vec * breakpoint_vec'), Y),
                     )
                 end
             elseif disjunctive_cuts_type == "linear2"
@@ -1363,60 +1373,165 @@ function relax_frob_matrixcomp(
                     matrix_cut[l=1:length(matrix_cuts)],
                     zero(AffExpr),
                 )
-                for (l, (eigvecs, Û, directions)) in enumerate(matrix_cuts)
+                for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
                     for j in 1:k
                         if directions[j] == "left"
                             @constraint(
                                 model,
-                                -1 ≤ Compat.dot(eigvecs, U[:,j]),
+                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]),
                             )
                             @constraint(
                                 model,
-                                Compat.dot(eigvecs, U[:,j])
-                                ≤ - abs(Compat.dot(eigvecs, Û[:,j])),
+                                Compat.dot(breakpoint_vec, U[:,j])
+                                ≤ - abs(Compat.dot(breakpoint_vec, Û[:,j])),
                             )
                             add_to_expression!(
                                 matrix_cut[l],
-                                - Compat.dot(U[:,j], eigvecs)
-                                - abs(Compat.dot(eigvecs, Û[:,j])) * Compat.dot(U[:,j], eigvecs)
-                                - abs(Compat.dot(eigvecs, Û[:,j])),
+                                - Compat.dot(U[:,j], breakpoint_vec)
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(U[:,j], breakpoint_vec)
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j])),
                             )
                         elseif directions[j] == "middle"
                             @constraint(
                                 model,
-                                - abs(Compat.dot(eigvecs, Û[:,j]))
-                                ≤ Compat.dot(eigvecs, U[:,j]),
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j]))
+                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
                             )
                             @constraint(
                                 model,
-                                Compat.dot(eigvecs, U[:,j])
-                                ≤ abs(Compat.dot(eigvecs, Û[:,j])),
+                                Compat.dot(breakpoint_vec, U[:,j])
+                                ≤ abs(Compat.dot(breakpoint_vec, Û[:,j])),
                             )
                             add_to_expression!(
                                 matrix_cut[l],
-                                (Compat.dot(eigvecs, Û[:,j]))^2,
+                                (Compat.dot(breakpoint_vec, Û[:,j]))^2,
                             )
                         elseif directions[j] == "right"
                             @constraint(
                                 model,
-                                abs(Compat.dot(eigvecs, Û[:,j]))
-                                ≤ Compat.dot(eigvecs, U[:,j]),
+                                abs(Compat.dot(breakpoint_vec, Û[:,j]))
+                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
                             )
                             @constraint(
                                 model,
-                                Compat.dot(eigvecs, U[:,j]) ≤ 1,
+                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
                             )
                             add_to_expression!(
                                 matrix_cut[l],
-                                + Compat.dot(U[:,j], eigvecs)
-                                + abs(Compat.dot(eigvecs, Û[:,j])) * Compat.dot(U[:,j], eigvecs)
-                                - abs(Compat.dot(eigvecs, Û[:,j])),
+                                + Compat.dot(U[:,j], breakpoint_vec)
+                                + abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(U[:,j], breakpoint_vec)
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j])),
                             )
                         end
                     end
                     @constraint(
                         model,
-                        matrix_cut[l] ≥ Compat.dot((eigvecs * eigvecs'), Y),
+                        matrix_cut[l] ≥ Compat.dot((breakpoint_vec * breakpoint_vec'), Y),
+                    )
+                end
+            elseif disjunctive_cuts_type == "linear3"
+                @expression(
+                    model,
+                    matrix_cut[l=1:length(matrix_cuts)],
+                    zero(AffExpr),
+                )
+                for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
+                    for j in 1:k
+                        if directions[j] == "left"
+                            @constraint(
+                                model,
+                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]),
+                            )
+                            @constraint(
+                                model,
+                                Compat.dot(breakpoint_vec, U[:,j])
+                                ≤ - abs(Compat.dot(breakpoint_vec, Û[:,j])),
+                            )
+                            add_to_expression!(
+                                matrix_cut[l],
+                                - Compat.dot(U[:,j], breakpoint_vec)
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(U[:,j], breakpoint_vec)
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j])),
+                            )
+                        elseif directions[j] == "inner_left"
+                            @constraint(
+                                model,
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j]))
+                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
+                            )
+                            @constraint(
+                                model,
+                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 0,
+                            )
+                            add_to_expression!(
+                                matrix_cut[l],
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(breakpoint_vec, U[:,j])
+                            )
+                        elseif directions[j] == "inner_right"
+                            @constraint(
+                                model,
+                                0 ≤ Compat.dot(breakpoint_vec, U[:,j]),
+                            )
+                            @constraint(
+                                model,
+                                Compat.dot(breakpoint_vec, U[:,j])
+                                ≤ abs(Compat.dot(breakpoint_vec, Û[:,j])),
+                            )
+                            add_to_expression!(
+                                matrix_cut[l],
+                                abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(breakpoint_vec, U[:,j])
+                            )
+                        elseif directions[j] == "right"
+                            @constraint(
+                                model,
+                                abs(Compat.dot(breakpoint_vec, Û[:,j]))
+                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
+                            )
+                            @constraint(
+                                model,
+                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
+                            )
+                            add_to_expression!(
+                                matrix_cut[l],
+                                + Compat.dot(U[:,j], breakpoint_vec)
+                                + abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(U[:,j], breakpoint_vec)
+                                - abs(Compat.dot(breakpoint_vec, Û[:,j])),
+                            )
+                        end
+                    end
+                    @constraint(
+                        model,
+                        matrix_cut[l] ≥ Compat.dot((breakpoint_vec * breakpoint_vec'), Y),
+                    )
+                end
+            elseif disjunctive_cuts_type == "linear_all"
+                for (breakpoint_vec, Û, basis) in matrix_cuts
+                    # polyhedral constraints on U
+                    @constraint(
+                        model,
+                        # requires Polyhedra package
+                        (U' * breakpoint_vec) in polyhedron(vrep(
+                            sqrt(k) .* hcat(
+                                Û' * breakpoint_vec, 
+                                basis
+                            )'
+                        ))
+                    )
+                    # linear constraint involving U and Y
+                    @constraint(
+                        model,
+                        Compat.dot((breakpoint_vec * breakpoint_vec'), Y)
+                        ≤ Compat.dot(
+                            k .* [
+                                sum((Û' * breakpoint_vec).^2), 
+                                repeat([1.0], k)...
+                            ],
+                            inv(vcat(
+                                sqrt(k) .* hcat(Û' * breakpoint_vec, basis),
+                                ones(1, k+1)
+                            ))
+                            * vcat((U' * breakpoint_vec), [1])
+                        )
                     )
                 end
             end
@@ -2168,15 +2283,21 @@ function create_matrix_cut_child_nodes(
     node_id::Int,
     objective_relax::Float64,
 )
-    # returns a tuple:
-    # eigvecs: (n, 1) most negative eigenvector of U U' - Y
-    # OR: eigvecs: (n, k) k most negative eigenvectors of U U' - Y
-    # U: (n, k): previous fitted version of Û
-    # directions: (k, ) vector of elements from {"left", "right"}
-    if !(disjunctive_cuts_type in ["linear", "linear2"])
+    # matrix_cuts is a vector of tuples: each containing:
+    # 1. breakpoint_vec: (n,) vector which is negative w.r.t. U U' - Y
+    # 2. U: (n, k): previous fitted version of Û
+    # 3. (if disjunctive_cuts_type == "linear") 
+    # directions: (k,) vector of elements from {"left", "right"} 
+    # OR 3. (if disjunctive_cuts_type == "linear2")
+    # directions: (k,) vector of elements from {"left", "middle", "right"}
+    # OR 3. (if disjunctive_cuts_type == "linear3")
+    # directions: (k,) vector of elements from {"left", "inner_left", "inner_right", "right"}
+    # OR 3. (if disjunctive_cuts_type == "linear_all")
+    # basis: (k, k) diagonal matrix with on-diagonal entries in {-1, 1} 
+    if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
         error("""
         Invalid input for disjunctive cuts type.
-        Disjunctive cuts type must be either "linear" or "linear2";
+        Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
         $disjunctive_cuts_type supplied instead.
         """)
     end
@@ -2201,20 +2322,20 @@ function create_matrix_cut_child_nodes(
     end
     (n, k) = size(U)
     
-    if disjunctive_cuts_type in ["linear", "linear2"]
-        if disjunctive_cuts_breakpoints == "smallest_1_eigvec"
-            eigvals, eigvecs, _ = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
+    if disjunctive_cuts_breakpoints == "smallest_1_eigvec"
+        eigvals, eigvecs, _ = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
+        breakpoint_vec = eigvecs[:,1]
+    elseif disjunctive_cuts_breakpoints == "smallest_2_eigvec"
+        eigvals, eigvecs, _ = eigs(U * U' - Y, nev=2, which=:SR, tol=1e-6)
+        if eigvals[2] < -1e-10
+            weights = abs.(eigvals[1:2]) ./ sqrt(sum(eigvals[1:2].^2))
+            breakpoint_vec = weights[1] * eigvecs[:,1] + weights[2] * eigvecs[:,2]
+        else
             breakpoint_vec = eigvecs[:,1]
-        elseif disjunctive_cuts_breakpoints == "smallest_2_eigvec"
-            eigvals, eigvecs, _ = eigs(U * U' - Y, nev=2, which=:SR, tol=1e-6)
-            if eigvals[2] < -1e-10
-                weights = abs.(eigvals[1:2]) ./ sqrt(sum(eigvals[1:2].^2))
-                breakpoint_vec = weights[1] * eigvecs[:,1] + weights[2] * eigvecs[:,2]
-                println("Found 2 negative eigenvectors! $(eigvals[1:2])")
-            else
-                breakpoint_vec = eigvecs[:,1]
-            end
         end
+    end
+
+    if disjunctive_cuts_type in ["linear", "linear2", "linear3"]
         if disjunctive_cuts_type == "linear"
             directions_list = enumerate(
                 Iterators.product(repeat([["left", "right"]], k)...)
@@ -2222,6 +2343,10 @@ function create_matrix_cut_child_nodes(
         elseif disjunctive_cuts_type == "linear2"
             directions_list = enumerate(
                 Iterators.product(repeat([["left", "middle", "right"]], k)...)
+            )
+        elseif disjunctive_cuts_type == "linear3"
+            directions_list = enumerate(
+                Iterators.product(repeat([["left", "inner_left", "inner_right", "right"]], k)...)
             )
         end
         return (
@@ -2236,6 +2361,19 @@ function create_matrix_cut_child_nodes(
                 parent_id = node_id,
             )
             for (ind, directions) in directions_list
+        )
+    elseif disjunctive_cuts_type in ["linear_all"]
+        return (
+            BBNode(
+                U_lower = U_lower,
+                U_upper = U_upper,
+                matrix_cuts = vcat(matrix_cuts, [(breakpoint_vec, U, diagm(collect(s)))]),
+                LB = objective_relax,
+                depth = depth + 1,
+                node_id = counter + ind, 
+                parent_id = node_id,
+            )
+            for (ind, s) in enumerate(Iterators.product(repeat([[1,-1]], k)...))
         )
     end
 end
