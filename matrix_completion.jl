@@ -20,6 +20,8 @@ using Polyhedra
 const GRB_ENV = Gurobi.Env()
 
 @with_kw mutable struct BBNode
+    node_id::Int
+    parent_id::Int
     U_lower::Union{Matrix{Float64}, Nothing} = nothing
     U_upper::Union{Matrix{Float64}, Nothing} = nothing
     φ_lower::Union{Matrix{Float64}, Nothing} = nothing
@@ -27,8 +29,7 @@ const GRB_ENV = Gurobi.Env()
     matrix_cuts::Union{Vector{Tuple}, Nothing} = nothing
     LB::Union{Float64, Nothing} = nothing
     depth::Int
-    node_id::Int
-    parent_id::Int
+    master_feasible::Bool = false
 end
 
 function branchandbound_frob_matrixcomp(
@@ -256,11 +257,7 @@ function branchandbound_frob_matrixcomp(
     if use_disjunctive_cuts
         U_lower_initial = -ones(n, k)
         # Symmetry-breaking constraints
-        for i in 1:n, j in 1:k
-            if i+j ≥ n+1
-                U_lower_initial[i,j] = 0.0
-            end
-        end
+        U_lower_initial[n,:] .= 0.0
         U_upper_initial = ones(n, k)
         initial_node = BBNode(
             U_lower = U_lower_initial, 
@@ -275,11 +272,7 @@ function branchandbound_frob_matrixcomp(
         if branching_region == "box"
             U_lower_initial = -ones(n, k)
             # Symmetry-breaking constraints
-            for i in 1:n, j in 1:k
-                if i+j ≥ n+1
-                    U_lower_initial[i,j] = 0.0
-                end
-            end
+            U_lower_initial[n,:] .= 0.0
             U_upper_initial = ones(n, k)
             initial_node = BBNode(
                 U_lower = U_lower_initial, 
@@ -542,7 +535,7 @@ function branchandbound_frob_matrixcomp(
                     lower = objective_relax
                 end
                 # if solution for relax_result has higher objective than best found so far: prune the node
-                if objective_relax ≥ solution["objective"]
+                if objective_relax > solution["objective"]
                     nodes_relax_feasible_pruned += 1
                     delete!(lower_bounds, current_node.node_id)
                     split_flag = false            
@@ -555,6 +548,7 @@ function branchandbound_frob_matrixcomp(
         # if it is the best found so far, update solution
         if split_flag
             if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, X_relax, Θ_relax, use_disjunctive_cuts)
+                current_node.master_feasible = true
                 nodes_master_feasible += 1
                 # if best found so far, update solution
                 if objective_relax < solution["objective"]
@@ -1706,7 +1700,6 @@ function alternating_minimization(
     @variable(model_U, U[1:n, 1:k])
     @constraint(model_U, U .≤ U_upper)
     @constraint(model_U, U .≥ U_lower)
-    # probably should impose McCormick <- local exploration
     @variable(model_U, t[1:n, 1:n, 1:k])
     @constraint(
         model_U,
