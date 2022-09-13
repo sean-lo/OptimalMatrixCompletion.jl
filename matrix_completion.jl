@@ -38,6 +38,7 @@ function branchandbound_frob_matrixcomp(
     indices::Array{Float64,2},
     γ::Float64,
     λ::Float64,
+    noise::Bool,
     ;
     branching_region::Union{String, Nothing} = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
     branching_type::Union{String, Nothing} = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
@@ -198,41 +199,50 @@ function branchandbound_frob_matrixcomp(
     solve_time_U_ranges = 0.0
     solve_time_polyhedra = 0.0
 
-    # TODO: better initial Us?
-    altmin_A_initial = zeros(n, m)
-    for i in 1:n, j in 1:m
-        if indices[i,j] == 1
-            altmin_A_initial[i,j] = A[i,j]
+    if noise
+        altmin_A_initial = zeros(n, m)
+        for i in 1:n, j in 1:m
+            if indices[i,j] == 1
+                altmin_A_initial[i,j] = A[i,j]
+            end
         end
-    end
-    altmin_U_initial, _, _ = svd(altmin_A_initial)
+        altmin_U_initial, _, _ = svd(altmin_A_initial)
 
-    altmin_results = @suppress alternating_minimization(
-        A, n, k, indices, γ, λ, use_disjunctive_cuts
-        ;
-        disjunctive_cuts_type = disjunctive_cuts_type,
-        U_initial = altmin_U_initial,
-        matrix_cuts = [],
-    )
-    solve_time_altmin += altmin_results["solve_time"]
-    push!(
-        dict_solve_times_altmin,
-        [
-            0,
-            0,
-            altmin_results["solve_time"],
-        ]
-    )
-    # do a re-SVD on U * V in order to recover orthonormal U
-    X_initial = altmin_results["U"] * altmin_results["V"]
-    U_initial = svd(X_initial).U[:,1:k]
-    Y_initial = U_initial * U_initial'
-    objective_initial = evaluate_objective(
-        X_initial, A, indices, U_initial, γ, λ,
-    )
-    MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
-    MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
-    MSE_all_initial = compute_MSE(X_initial, A, indices, kind = "all")
+        altmin_results = @suppress alternating_minimization(
+            A, n, k, indices, γ, λ, use_disjunctive_cuts
+            ;
+            disjunctive_cuts_type = disjunctive_cuts_type,
+            U_initial = altmin_U_initial,
+            matrix_cuts = [],
+        )
+        solve_time_altmin += altmin_results["solve_time"]
+        push!(
+            dict_solve_times_altmin,
+            [
+                0,
+                0,
+                altmin_results["solve_time"],
+            ]
+        )
+        # do a re-SVD on U * V in order to recover orthonormal U
+        X_initial = altmin_results["U"] * altmin_results["V"]
+        U_initial = svd(X_initial).U[:,1:k]
+        Y_initial = U_initial * U_initial'
+        objective_initial = evaluate_objective(
+            X_initial, A, indices, U_initial, γ, λ,
+        )
+        MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
+        MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
+        MSE_all_initial = compute_MSE(X_initial, A, indices, kind = "all")
+    else
+        objective_initial = Inf
+        MSE_in_initial = Inf
+        MSE_out_initial = Inf
+        MSE_all_initial = Inf
+        Y_initial = nothing
+        U_initial = nothing
+        X_initial = nothing
+    end
     
     solution = Dict(
         "objective_initial" => objective_initial,
@@ -252,7 +262,6 @@ function branchandbound_frob_matrixcomp(
     )
 
     ranges = []
-
     nodes = []
     upper = objective_initial
     lower = -Inf
@@ -438,20 +447,20 @@ function branchandbound_frob_matrixcomp(
         if !use_disjunctive_cuts && split_flag
             if branching_region in ["box", "angular"]
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k;
+                    n, k, A, indices, noise;
                     branching_region = branching_region,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                 )
             elseif branching_region == "polyhedral"
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k;
+                    n, k, A, indices, noise;
                     branching_region = branching_region,
                     polyhedra = polyhedra,
                 )
             elseif branching_region == "hybrid"
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                    n, k;
+                    n, k, A, indices, noise;
                     branching_region = branching_region,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
@@ -469,7 +478,7 @@ function branchandbound_frob_matrixcomp(
         if split_flag
             if use_disjunctive_cuts
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, A, indices, γ, λ, use_disjunctive_cuts;
+                    n, k, A, indices, γ, λ, noise, use_disjunctive_cuts;
                     disjunctive_cuts_type = disjunctive_cuts_type,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
@@ -478,27 +487,27 @@ function branchandbound_frob_matrixcomp(
             else               
                 if branching_region == "box"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, γ, λ, use_disjunctive_cuts; 
+                        n, k, A, indices, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
                     )
                 elseif branching_region == "angular"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, γ, λ, use_disjunctive_cuts; 
+                        n, k, A, indices, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
                     )
                 elseif branching_region == "polyhedral"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, γ, λ, use_disjunctive_cuts; 
+                        n, k, A, indices, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         polyhedra = polyhedra,
                     )
                 elseif branching_region == "hybrid"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, γ, λ, use_disjunctive_cuts; 
+                        n, k, A, indices, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region,
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper, 
@@ -572,7 +581,11 @@ function branchandbound_frob_matrixcomp(
             max_altmin_probability / (2^current_node.depth),
             min_altmin_probability
         )
-        altmin_flag_now = altmin_flag && (rand() < altmin_probability)
+        altmin_flag_now = (
+            altmin_flag 
+            && noise # only perform alternating minimization in the noisy setting
+            && (rand() < altmin_probability)
+        )
         if split_flag
             if altmin_flag_now
                 # TODO: check if it's not extremely close to projs already
@@ -1058,6 +1071,9 @@ end
 function relax_feasibility_frob_matrixcomp( # this is the version without matrix_cuts
     n::Int,
     k::Int,
+    A::Array{Float64, 2},
+    indices::Array{Float64, 2},
+    noise::Bool,
     ;
     branching_region::String = "box",
     U_lower::Array{Float64,2} = begin
@@ -1213,6 +1229,7 @@ function relax_frob_matrixcomp(
     indices::Array{Float64,2},
     γ::Float64,
     λ::Float64,
+    noise::Bool,
     use_disjunctive_cuts::Bool,
     ;
     branching_region::Union{String, Nothing} = nothing,
@@ -1228,6 +1245,7 @@ function relax_frob_matrixcomp(
     orthogonality_tolerance::Float64 = 0.0,
     solver_output::Int = 0,
 )
+    # TODO: only for noisy case: remove?
     function compute_α(Y, γ, A, indices)
         (n, m) = size(A)
         α = zeros(size(A))
@@ -1301,6 +1319,15 @@ function relax_frob_matrixcomp(
     @variable(model, U[1:n, 1:k])
     if !use_disjunctive_cuts
         @variable(model, t[1:n, 1:k, 1:k])
+    end
+
+    # If noiseless, coupling constraints between X and A
+    if !noise
+        for i in 1:n, j in 1:k
+            if indices[i,j] > 0.5
+                @constraint(model, X[i,j] == A[i,j])
+            end
+        end
     end
 
     @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
@@ -1620,16 +1647,25 @@ function relax_frob_matrixcomp(
         ] in SecondOrderCone()
     )
 
-    @objective(
-        model,
-        Min,
-        (1 / 2) * sum(
-            (X[i, j] - A[i, j])^2 * indices[i, j] 
-            for i = 1:n, j = 1:m
-        ) 
-        + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
-        + λ * sum(Y[i, i] for i = 1:n)
-    )
+    if !noise
+        @objective(
+            model,
+            Min,
+            sum(Θ[i, i] for i = 1:m)
+            + λ * sum(Y[i, i] for i = 1:n)
+        )
+    else
+        @objective(
+            model,
+            Min,
+            (1 / 2) * sum(
+                (X[i, j] - A[i, j])^2 * indices[i, j] 
+                for i = 1:n, j = 1:m
+            ) 
+            + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
+            + λ * sum(Y[i, i] for i = 1:n)
+        )
+    end
 
     optimize!(model)
     results = Dict(
@@ -1698,8 +1734,7 @@ function alternating_minimization(
     ϵ::Float64 = 1e-10,
     max_iters::Int = 10000,
 )
-    # TODO: make the models in the main function body
-
+    # Note: only used in the noisy case
     altmin_start_time = time()
 
     (n, m) = size(A)
@@ -1712,6 +1747,8 @@ function alternating_minimization(
     model_U = Model(() -> Gurobi.Optimizer(GRB_ENV))
     set_silent(model_U)
     @variable(model_U, U[1:n, 1:k])
+    @variable(model_U, t[1:n, 1:n, 1:k])
+
     @constraint(model_U, U .≤ U_upper)
     @constraint(model_U, U .≥ U_lower)
 
@@ -1845,7 +1882,6 @@ function alternating_minimization(
         end
     end
 
-    @variable(model_U, t[1:n, 1:n, 1:k])
     @constraint(
         model_U,
         [i = 1:n, j1 = 1:k, j2 = j1:k],
