@@ -199,6 +199,12 @@ function branchandbound_frob_matrixcomp(
     solve_time_U_ranges = 0.0
     solve_time_polyhedra = 0.0
 
+    if !noise && k == 1
+        X_indices = rank1_presolve(indices)
+    else
+        X_indices = indices
+    end
+
     if noise
         altmin_A_initial = zeros(n, m)
         for i in 1:n, j in 1:m
@@ -478,7 +484,7 @@ function branchandbound_frob_matrixcomp(
         if split_flag
             if use_disjunctive_cuts
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, A, indices, γ, λ, noise, use_disjunctive_cuts;
+                    n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts;
                     disjunctive_cuts_type = disjunctive_cuts_type,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
@@ -487,27 +493,27 @@ function branchandbound_frob_matrixcomp(
             else               
                 if branching_region == "box"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, γ, λ, noise, use_disjunctive_cuts; 
+                        n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
                     )
                 elseif branching_region == "angular"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, γ, λ, noise, use_disjunctive_cuts; 
+                        n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
                     )
                 elseif branching_region == "polyhedral"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, γ, λ, noise, use_disjunctive_cuts; 
+                        n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         polyhedra = polyhedra,
                     )
                 elseif branching_region == "hybrid"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, γ, λ, noise, use_disjunctive_cuts; 
+                        n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region,
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper, 
@@ -1227,6 +1233,7 @@ function relax_frob_matrixcomp(
     k::Int,
     A::Array{Float64,2},
     indices::BitMatrix, # for objective computation
+    X_indices::BitMatrix, # for coupling constraints, in the noiseless case
     γ::Float64,
     λ::Float64,
     noise::Bool,
@@ -1324,7 +1331,7 @@ function relax_frob_matrixcomp(
     # If noiseless, coupling constraints between X and A
     if !noise
         for i in 1:n, j in 1:k
-            if indices[i,j]
+            if X_indices[i,j]
                 @constraint(model, X[i,j] == A[i,j])
             end
         end
@@ -2550,4 +2557,21 @@ function create_matrix_cut_child_nodes(
             for (ind, s) in enumerate(Iterators.product(repeat([[1,-1]], k)...))
         )
     end
+end
+
+function rank1_presolve(
+    indices::BitMatrix,
+)
+    X_indices = copy(indices)
+    (n, m) = size(indices)
+
+    for j0 in 1:n
+        selected_rows = findall(X_indices[:,j0])
+        if length(selected_rows) > 1
+            rows_or = any(X_indices[selected_rows, :], dims=1)
+            X_indices[selected_rows, :] .= rows_or
+        end
+    end
+
+    return X_indices
 end
