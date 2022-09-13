@@ -35,7 +35,7 @@ end
 function branchandbound_frob_matrixcomp(
     k::Int,
     A::Array{Float64,2},
-    indices::Array{Float64,2},
+    indices::BitMatrix,
     γ::Float64,
     λ::Float64,
     noise::Bool,
@@ -1072,7 +1072,7 @@ function relax_feasibility_frob_matrixcomp( # this is the version without matrix
     n::Int,
     k::Int,
     A::Array{Float64, 2},
-    indices::Array{Float64, 2},
+    indices::BitMatrix,
     noise::Bool,
     ;
     branching_region::String = "box",
@@ -1226,7 +1226,7 @@ function relax_frob_matrixcomp(
     n::Int,
     k::Int,
     A::Array{Float64,2},
-    indices::Array{Float64,2},
+    indices::BitMatrix, # for objective computation
     γ::Float64,
     λ::Float64,
     noise::Bool,
@@ -1251,7 +1251,7 @@ function relax_frob_matrixcomp(
         α = zeros(size(A))
         for j in 1:m
             for i in 1:n
-                if indices[i,j] ≥ 0.5
+                if indices[i,j]
                     α[i,j] = (
                         - γ * sum(
                             Y[i,l] * A[l,j] * indices[l,j]
@@ -1324,7 +1324,7 @@ function relax_frob_matrixcomp(
     # If noiseless, coupling constraints between X and A
     if !noise
         for i in 1:n, j in 1:k
-            if indices[i,j] > 0.5
+            if indices[i,j]
                 @constraint(model, X[i,j] == A[i,j])
             end
         end
@@ -1717,7 +1717,7 @@ function alternating_minimization(
     A::Array{Float64,2},
     n::Int,
     k::Int,
-    indices::Array{Float64,2},
+    indices::BitMatrix,
     γ::Float64,
     λ::Float64,
     use_disjunctive_cuts::Bool,
@@ -2000,7 +2000,7 @@ end
 function evaluate_objective(
     X::Array{Float64,2},
     A::Array{Float64,2},
-    indices::Array{Float64,2},
+    indices::BitMatrix,
     U::Array{Float64,2},
     γ::Float64,
     λ::Float64,
