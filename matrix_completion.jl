@@ -49,6 +49,7 @@ function branchandbound_frob_matrixcomp(
     use_disjunctive_cuts::Bool = true,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing, # either "smallest_1_eigvec" or "smallest_2_eigvec"
+    presolve::Bool = false,
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     use_max_steps::Bool = false,
