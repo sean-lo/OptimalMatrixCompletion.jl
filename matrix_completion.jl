@@ -1448,45 +1448,32 @@ function relax_frob_matrixcomp(
     # matrix cuts on U, if supplied
     if use_disjunctive_cuts
         if length(matrix_cuts) > 0
-            if disjunctive_cuts_type == "linear"        
+            L = length(matrix_cuts)
+            if disjunctive_cuts_type == "linear"
                 @expression(
                     model,
-                    matrix_cut[l=1:length(matrix_cuts)],
+                    matrix_cut[l=1:L],
                     zero(AffExpr),
                 )
+                @variable(model, v[1:L, 1:k])
+                v̂ = zeros(L, k)
                 for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
                     for j in 1:k
+                        @constraint(model, v[l,j] == Compat.dot(breakpoint_vec, U[:,j]))
+                        v̂[l,j] = Compat.dot(breakpoint_vec, Û[:,j])
                         if directions[j] == "left"
-                            @constraint(
-                                model, 
-                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]), 
-                            )
-                            @constraint(
-                                model, 
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ Compat.dot(breakpoint_vec, Û[:,j]), 
-                            )
+                            @constraint(model, -1 ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ v̂[l,j])
                             add_to_expression!(
                                 matrix_cut[l],
-                                - Compat.dot(U[:,j], breakpoint_vec)
-                                + Compat.dot(breakpoint_vec, Û[:,j]) * Compat.dot(U[:,j], breakpoint_vec)
-                                + Compat.dot(breakpoint_vec, Û[:,j]),
+                                - v[l,j] + v̂[l,j] * v[l,j] + v̂[l,j],
                             )
                         elseif directions[j] == "right"
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, Û[:,j]) 
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
-                            )
+                            @constraint(model, v̂[l,j] ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ 1)
                             add_to_expression!(
                                 matrix_cut[l],
-                                + Compat.dot(U[:,j], breakpoint_vec)
-                                + Compat.dot(breakpoint_vec, Û[:,j]) * Compat.dot(U[:,j], breakpoint_vec)
-                                - Compat.dot(breakpoint_vec, Û[:,j]),
+                                + v[l,j] + v̂[l,j] * v[l,j] - v̂[l,j],
                             )
                         end
                     end
@@ -1498,57 +1485,32 @@ function relax_frob_matrixcomp(
             elseif disjunctive_cuts_type == "linear2"
                 @expression(
                     model, 
-                    matrix_cut[l=1:length(matrix_cuts)],
+                    matrix_cut[l=1:L],
                     zero(AffExpr),
                 )
+                @variable(model, v[1:L, 1:k])
+                v̂ = zeros(L, k)
                 for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
                     for j in 1:k
+                        @constraint(model, v[l,j] == Compat.dot(breakpoint_vec, U[:,j]))
+                        v̂[l,j] = Compat.dot(breakpoint_vec, Û[:,j])
                         if directions[j] == "left"
-                            @constraint(
-                                model,
-                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ - abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
-                            add_to_expression!(
-                                matrix_cut[l],
-                                - Compat.dot(U[:,j], breakpoint_vec)
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(U[:,j], breakpoint_vec)
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
+                            @constraint(model, -1 ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ - abs(v̂[l,j]))
+                            add_to_expression!(matrix_cut[l], - v[l,j] - abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]))
                         elseif directions[j] == "middle"
-                            @constraint(
-                                model,
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j]))
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
+                            @constraint(model, - abs(v̂[l,j]) ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ abs(v̂[l,j]))
                             add_to_expression!(
                                 matrix_cut[l],
-                                (Compat.dot(breakpoint_vec, Û[:,j]))^2,
+                                (v̂[l,j])^2,
                             )
                         elseif directions[j] == "right"
-                            @constraint(
-                                model,
-                                abs(Compat.dot(breakpoint_vec, Û[:,j]))
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
-                            )
+                            @constraint(model, abs(v̂[l,j]) ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ 1)
                             add_to_expression!(
                                 matrix_cut[l],
-                                + Compat.dot(U[:,j], breakpoint_vec)
-                                + abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(U[:,j], breakpoint_vec)
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j])),
+                                + v[l,j] + abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
                             )
                         end
                     end
@@ -1560,70 +1522,42 @@ function relax_frob_matrixcomp(
             elseif disjunctive_cuts_type == "linear3"
                 @expression(
                     model,
-                    matrix_cut[l=1:length(matrix_cuts)],
+                    matrix_cut[l=1:L],
                     zero(AffExpr),
                 )
+                @variable(model, v[1:L, 1:k])
+                v̂ = zeros(L, k)
                 for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
                     for j in 1:k
+                        @constraint(model, v[l,j] == Compat.dot(breakpoint_vec, U[:,j]))
+                        v̂[l,j] = Compat.dot(breakpoint_vec, Û[:,j])
                         if directions[j] == "left"
-                            @constraint(
-                                model,
-                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ - abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
+                            @constraint(model, -1 ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ - abs(v̂[l,j]))
                             add_to_expression!(
                                 matrix_cut[l],
-                                - Compat.dot(U[:,j], breakpoint_vec)
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(U[:,j], breakpoint_vec)
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j])),
+                                - v[l,j] - abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
                             )
                         elseif directions[j] == "inner_left"
-                            @constraint(
-                                model,
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j]))
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 0,
-                            )
+                            @constraint(model, - abs(v̂[l,j]) ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ 0)
                             add_to_expression!(
                                 matrix_cut[l],
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(breakpoint_vec, U[:,j])
+                                - abs(v̂[l,j]) * v[l,j]
                             )
                         elseif directions[j] == "inner_right"
-                            @constraint(
-                                model,
-                                0 ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
+                            @constraint(model, 0 ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ abs(v̂[l,j]))
                             add_to_expression!(
                                 matrix_cut[l],
-                                abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(breakpoint_vec, U[:,j])
+                                abs(v̂[l,j]) * v[l,j]
                             )
                         elseif directions[j] == "right"
-                            @constraint(
-                                model,
-                                abs(Compat.dot(breakpoint_vec, Û[:,j]))
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model,
-                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
-                            )
+                            @constraint(model, abs(v̂[l,j]) ≤ v[l,j])
+                            @constraint(model, v[l,j] ≤ 1)
                             add_to_expression!(
                                 matrix_cut[l],
-                                + Compat.dot(U[:,j], breakpoint_vec)
-                                + abs(Compat.dot(breakpoint_vec, Û[:,j])) * Compat.dot(U[:,j], breakpoint_vec)
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j])),
+                                + v[l,j] + abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
                             )
                         end
                     end
