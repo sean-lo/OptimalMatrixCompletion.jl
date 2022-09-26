@@ -25,6 +25,7 @@ function test_branchandbound_frob_matrixcomp(
     use_disjunctive_cuts::Bool = true,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing,
+    presolve::Bool = false,
     root_only::Bool = false,
     altmin_flag::Bool = true,
     use_max_steps::Bool = true,
@@ -86,6 +87,7 @@ function test_branchandbound_frob_matrixcomp(
         indices,
         γ,
         λ,
+        noise,
         ;
         branching_region = branching_region,
         branching_type = branching_type,
@@ -95,6 +97,7 @@ function test_branchandbound_frob_matrixcomp(
         use_disjunctive_cuts = use_disjunctive_cuts,
         disjunctive_cuts_type = disjunctive_cuts_type,
         disjunctive_cuts_breakpoints = disjunctive_cuts_breakpoints,
+        presolve = presolve,
         root_only = root_only,
         altmin_flag = altmin_flag,
         use_max_steps = use_max_steps,
