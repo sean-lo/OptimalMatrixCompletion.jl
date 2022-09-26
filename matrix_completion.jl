@@ -56,6 +56,15 @@ function branchandbound_frob_matrixcomp(
     time_limit::Int = 3600, # time limit in seconds
     update_step::Int = 1000,
 )
+    function add_message!(
+        printlist, message_list
+    )
+        for message in message_list
+            print(stdout, message)
+            push!(printlist, message)
+        end
+        return
+    end
 
     function add_update!(
         printlist, instance, nodes_explored, counter, 
@@ -79,8 +88,7 @@ function branchandbound_frob_matrixcomp(
         else
             message *= "\n"
         end
-        print(stdout, message)
-        push!(printlist, message)
+        add_message!(printlist, [message])
         push!(
             instance["run_log"],
             (nodes_explored, counter, lower, upper, now_gap, current_time_elapsed)
@@ -142,7 +150,8 @@ function branchandbound_frob_matrixcomp(
     Random.seed!(0)
 
     (n, m) = size(A)
-    printlist = [
+    printlist = []
+    add_message!(printlist, [
         Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), "\n",
         "Starting branch-and-bound on a matrix completion problem.\n",
         Printf.@sprintf("k:                        %15d\n", k),
@@ -157,17 +166,13 @@ function branchandbound_frob_matrixcomp(
         Printf.@sprintf("Node selection:           %15s\n", node_selection),
         Printf.@sprintf("Use disjunctive cuts?:    %15s\n", use_disjunctive_cuts),
         Printf.@sprintf("Disjunctive cuts type:    %15s\n", disjunctive_cuts_type),
+        Printf.@sprintf("Disjunction breakpoints:  %15s\n", disjunctive_cuts_breakpoints),
+        Printf.@sprintf("Use valid inequalities?:  %15s\n", add_lasserre_valid_inequalities),
         Printf.@sprintf("Optimality gap:           %15g\n", gap),
         Printf.@sprintf("Cap on nodes?             %15s\n", use_max_steps),
         Printf.@sprintf("Maximum nodes:            %15d\n", max_steps),
         Printf.@sprintf("Time limit (s):           %15d\n", time_limit),
-        "-----------------------------------------------------------------------------------\n",
-        "|   Explored |      Total |      Lower |      Upper |        Gap |    Runtime (s) |\n",
-        "-----------------------------------------------------------------------------------\n",
-    ]
-    for message in printlist
-        print(stdout, message)
-    end
+    ])
 
     max_altmin_probability = 1.0
     min_altmin_probability = 0.01
@@ -314,6 +319,12 @@ function branchandbound_frob_matrixcomp(
         end
     end
     push!(nodes, initial_node)
+
+    add_message!(printlist, [
+        "-----------------------------------------------------------------------------------\n",
+        "|   Explored |      Total |      Lower |      Upper |        Gap |    Runtime (s) |\n",
+        "-----------------------------------------------------------------------------------\n",
+    ])
 
     # leaves' mapping from node_id to lower_bound
     lower_bounds = Dict{Int, Float64}() 
