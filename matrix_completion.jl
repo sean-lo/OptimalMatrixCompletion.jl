@@ -40,9 +40,9 @@ function branchandbound_frob_matrixcomp(
     λ::Float64,
     noise::Bool,
     ;
-    branching_region::Union{String, Nothing} = "box", # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
-    branching_type::Union{String, Nothing} = "lexicographic", # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
-    branch_point::Union{String, Nothing} = "midpoint", # determine which value to branch on: either "midpoint" or "current_point"
+    branching_region::Union{String, Nothing} = nothing, # region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid"
+    branching_type::Union{String, Nothing} = nothing, # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
+    branch_point::Union{String, Nothing} = nothing, # determine which value to branch on: either "midpoint" or "current_point"
     node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst"
     bestfirst_depthfirst_cutoff::Int = 10000,
     gap::Float64 = 1e-4, # optimality gap for algorithm (proportion)
@@ -363,7 +363,7 @@ function branchandbound_frob_matrixcomp(
         U_initial = svd(X_initial).U[:,1:k]
         Y_initial = U_initial * U_initial'
         objective_initial = evaluate_objective(
-            X_initial, A, indices, U_initial, γ, λ,
+            X_initial, A, indices, U_initial, γ, λ, noise
         )
         MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
         MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
@@ -373,9 +373,9 @@ function branchandbound_frob_matrixcomp(
         MSE_in_initial = Inf
         MSE_out_initial = Inf
         MSE_all_initial = Inf
-        Y_initial = nothing
-        U_initial = nothing
-        X_initial = nothing
+        Y_initial = zeros(Float64, (n, n))
+        U_initial = zeros(Float64, (n, k))
+        X_initial = zeros(Float64, (n, m))
     end
     
     solution = Dict(
@@ -720,7 +720,7 @@ function branchandbound_frob_matrixcomp(
                 # guaranteed to be a projection matrix since U_local is a svd result
                 
                 objective_local = evaluate_objective(
-                    X_local, A, indices, U_local, γ, λ,
+                    X_local, A, indices, U_local, γ, λ, noise
                 )
 
                 if objective_local < solution["objective"]
@@ -2100,6 +2100,7 @@ function evaluate_objective(
     U::Array{Float64,2},
     γ::Float64,
     λ::Float64,
+    noise::Bool,
 )
     if !(
         size(X) == size(A) == size(indices) 
@@ -2115,14 +2116,21 @@ function evaluate_objective(
     end
     n, m = size(X)
     n, k = size(U)
-    return (
-        (1 / 2) * sum(
-            (X[i,j] - A[i,j])^2 * indices[i,j]
-            for i = 1:n, j = 1:m
+    if !noise
+        return (
+            (1 / (2 * γ)) * sum(X.^2)
+            + λ * sum(U.^2)
         )
-        + (1 / (2 * γ)) * sum(X.^2)
-        + λ * sum(U.^2)
-    )
+    else
+        return (
+            (1 / 2) * sum(
+                (X[i,j] - A[i,j])^2 * indices[i,j]
+                for i = 1:n, j = 1:m
+            )
+            + (1 / (2 * γ)) * sum(X.^2)
+            + λ * sum(U.^2)
+        )
+    end
 end
 
 function compute_MSE(X, A, indices; kind = "out")
