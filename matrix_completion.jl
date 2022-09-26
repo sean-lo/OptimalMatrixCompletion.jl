@@ -34,7 +34,7 @@ end
 
 function branchandbound_frob_matrixcomp(
     k::Int,
-    A::Array{Float64,2},
+    A::Array{Float64,2}, # This is a rank-k matrix (optionally, with noise)
     indices::BitMatrix,
     γ::Float64,
     λ::Float64,
@@ -177,6 +177,69 @@ function branchandbound_frob_matrixcomp(
     max_altmin_probability = 1.0
     min_altmin_probability = 0.01
 
+    start_time = time()
+    solve_time_altmin = 0.0
+    dict_solve_times_altmin = DataFrame(
+        node_id = Int[],
+        depth = Int[],
+        solve_time = Float64[],
+    )
+    solve_time_relaxation_feasibility = 0.0
+    solve_time_relaxation = 0.0
+    dict_solve_times_relaxation = DataFrame(
+        node_id = Int[],
+        depth = Int[],
+        solve_time = Float64[],
+    )
+    solve_time_U_ranges = 0.0
+    solve_time_polyhedra = 0.0
+
+    # (1) number of nodes explored so far
+    nodes_explored = 0
+    # (2) number of nodes generated in total
+    counter = 1
+    last_updated_counter = 1    
+    now_gap = 1e5
+
+    # (3) number of nodes whose parent has 
+    # relaxation dominated by best solution found so far
+    nodes_dominated = 0 # always pruned
+    # (4) number of nodes with infeasible relaxation
+    nodes_relax_infeasible = 0 # always pruned
+    # (5) number of nodes with feasible relaxation,
+    # a.k.a. number of relaxations solved
+    nodes_relax_feasible = 0 
+    # (3) + (4) + (5) should yield (1)
+
+    # (6) number of nodes with feasible relaxation
+    # that have objective dominated by best upper bound so far
+    nodes_relax_feasible_pruned = 0 # always pruned
+    # (7) number of nodes with feasible relaxation
+    # that are also feasible for the master problem
+    nodes_master_feasible = 0 # always pruned
+    # (8) number of nodes with feasible relaxation
+    # that are also feasible for the master problem,
+    # and improve on best upper bound so far
+    nodes_master_feasible_improvement = 0 # always pruned
+    # (8) ⊂ (7)
+
+    # (9) number of nodes with feasible relaxation,
+    # that have objective NOT dominated by best upper bound so far,
+    # that are not feasible for the master problem,
+    # and are therefore split on
+    nodes_relax_feasible_split = 0 # not pruned
+
+    # (6) + (7) + (9) should yield (5)
+    # pruned nodes: (3) + (4) + (6) + (7)
+    # not pruned nodes: (9)
+
+    # (10) number of nodes on which alternating minimization heuristic is performed
+    nodes_relax_feasible_split_altmin = 0 # not pruned
+    # (10) ⊂ (9)
+    # (11) number of nodes on which alternating minimization heuristic is performed and results in an improvement on the incumbent solution
+    nodes_relax_feasible_split_altmin_improvement = 0
+    # (11) ⊂ (10)
+
     instance = Dict()
     instance["run_log"] = DataFrame(
         explored = Int[],
@@ -186,37 +249,97 @@ function branchandbound_frob_matrixcomp(
         gap = Float64[],
         runtime = Float64[],
     )
-
-    start_time = time()
-    solve_time_relaxation_feasibility = 0.0
-    solve_time_relaxation = 0.0
-    dict_solve_times_relaxation = DataFrame(
-        node_id = Int[],
-        depth = Int[],
-        solve_time = Float64[],
+    instance["run_details"] = OrderedDict(
+        "k" => k,
+        "m" => m,
+        "n" => n,
+        "A" => A,
+        "indices" => indices,
+        "num_indices" => convert(Int, round(sum(indices))),
+        "γ" => γ,
+        "λ" => λ,
+        "branching_region" => branching_region,
+        "branching_type" => branching_type,
+        "branch_point" => branch_point,
+        "node_selection" => node_selection,
+        "bestfirst_depthfirst_cutoff" => bestfirst_depthfirst_cutoff,
+        "use_disjunctive_cuts" => use_disjunctive_cuts,
+        "disjunctive_cuts_type" => disjunctive_cuts_type,
+        "disjunctive_cuts_breakpoints" => disjunctive_cuts_breakpoints,
+        "add_lasserre_valid_inequalities" => add_lasserre_valid_inequalities,
+        "optimality_gap" => gap,
+        "use_max_steps" => use_max_steps,
+        "max_steps" => max_steps,
+        "time_limit" => time_limit,
+        "max_altmin_probability" => max_altmin_probability,
+        "min_altmin_probability" => min_altmin_probability,
+        "log_time" => log_time,
+        "start_time" => start_time,
+        "end_time" => start_time,
+        "time_taken" => 0.0,
+        "solve_time_altmin" => solve_time_altmin,
+        "dict_solve_times_altmin" => dict_solve_times_altmin,
+        "solve_time_relaxation_feasibility" => solve_time_relaxation_feasibility,
+        "solve_time_relaxation" => solve_time_relaxation,
+        "dict_solve_times_relaxation" => dict_solve_times_relaxation,
+        "solve_time_U_ranges" => solve_time_U_ranges,
+        "solve_time_polyhedra" => solve_time_polyhedra,
+        "nodes_explored" => nodes_explored,
+        "nodes_total" => counter,
+        "nodes_dominated" => nodes_dominated,
+        "nodes_relax_infeasible" => nodes_relax_infeasible,
+        "nodes_relax_feasible" => nodes_relax_feasible,
+        "nodes_relax_feasible_pruned" => nodes_relax_feasible_pruned,
+        "nodes_master_feasible" => nodes_master_feasible,
+        "nodes_master_feasible_improvement" => nodes_master_feasible_improvement,
+        "nodes_relax_feasible_split" => nodes_relax_feasible_split,
+        "nodes_relax_feasible_split_altmin" => nodes_relax_feasible_split_altmin,
+        "nodes_relax_feasible_split_altmin_improvement" => nodes_relax_feasible_split_altmin_improvement,
     )
-    solve_time_altmin = 0.0
-    dict_solve_times_altmin = DataFrame(
-        node_id = Int[],
-        depth = Int[],
-        solve_time = Float64[],
-    )
-    solve_time_U_ranges = 0.0
-    solve_time_polyhedra = 0.0
 
-    if !noise && k == 1
-        X_indices = rank1_presolve(indices)
+    if !noise && presolve && k == 1
+        indices_presolved, X_presolved = rank1_presolve(indices, A)
+        X_initial = X_presolved
+        U_initial = svd(X_initial).U[:,1:k]
+        Y_initial = U_initial * U_initial'
+        objective_initial = evaluate_objective(
+            X_initial, A, indices, U_initial, γ, λ, noise
+        )
+        MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
+        MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
+        MSE_all_initial = compute_MSE(X_initial, A, indices, kind = "all")
+        solution = Dict(
+            "objective_initial" => objective_initial,
+            "MSE_in_initial" => MSE_in_initial,
+            "MSE_out_initial" => MSE_out_initial,
+            "MSE_all_initial" => MSE_all_initial,
+            "Y_initial" => Y_initial,
+            "U_initial" => U_initial,
+            "X_initial" => X_initial,
+            "objective" => objective_initial,
+            "MSE_in" => MSE_in_initial,
+            "MSE_out" => MSE_out_initial,
+            "MSE_all" => MSE_all_initial,
+            "Y" => Y_initial,
+            "U" => U_initial,
+            "X" => X_initial,
+        )
+        if sum(indices_presolved) == m * n
+            add_message!(printlist, [
+                "Solved in presolve stage.\n",
+            ])            
+            end_time = time()
+            instance["run_details"]["end_time"] = end_time
+            instance["run_details"]["time_taken"] = end_time - start_time
+            return solution, printlist, instance
+        end
     else
-        X_indices = indices
+        indices_presolved = indices
     end
 
     if noise
         altmin_A_initial = zeros(n, m)
-        for i in 1:n, j in 1:m
-            if indices[i,j] == 1
-                altmin_A_initial[i,j] = A[i,j]
-            end
-        end
+        altmin_A_initial[indices] = A[indices]
         altmin_U_initial, _, _ = svd(altmin_A_initial)
 
         altmin_results = @suppress alternating_minimization(
@@ -330,52 +453,6 @@ function branchandbound_frob_matrixcomp(
     lower_bounds = Dict{Int, Float64}() 
     minimum_lower_bounds = Inf
     ancestry = Dict{Int, Vector{Int}}()
-
-    # (1) number of nodes explored so far
-    nodes_explored = 0
-    # (2) number of nodes generated in total
-    counter = 1
-    last_updated_counter = 1    
-    now_gap = 1e5
-
-    # (3) number of nodes whose parent has 
-    # relaxation dominated by best solution found so far
-    nodes_dominated = 0 # always pruned
-    # (4) number of nodes with infeasible relaxation
-    nodes_relax_infeasible = 0 # always pruned
-    # (5) number of nodes with feasible relaxation,
-    # a.k.a. number of relaxations solved
-    nodes_relax_feasible = 0 
-    # (3) + (4) + (5) should yield (1)
-
-    # (6) number of nodes with feasible relaxation
-    # that have objective dominated by best upper bound so far
-    nodes_relax_feasible_pruned = 0 # always pruned
-    # (7) number of nodes with feasible relaxation
-    # that are also feasible for the master problem
-    nodes_master_feasible = 0 # always pruned
-    # (8) number of nodes with feasible relaxation
-    # that are also feasible for the master problem,
-    # and improve on best upper bound so far
-    nodes_master_feasible_improvement = 0 # always pruned
-    # (8) ⊂ (7)
-
-    # (9) number of nodes with feasible relaxation,
-    # that have objective NOT dominated by best upper bound so far,
-    # that are not feasible for the master problem,
-    # and are therefore split on
-    nodes_relax_feasible_split = 0 # not pruned
-
-    # (6) + (7) + (9) should yield (5)
-    # pruned nodes: (3) + (4) + (6) + (7)
-    # not pruned nodes: (9)
-
-    # (10) number of nodes on which alternating minimization heuristic is performed
-    nodes_relax_feasible_split_altmin = 0 # not pruned
-    # (10) ⊂ (9)
-    # (11) number of nodes on which alternating minimization heuristic is performed and results in an improvement on the incumbent solution
-    nodes_relax_feasible_split_altmin_improvement = 0
-    # (11) ⊂ (10)
 
     while (
         now_gap > gap 
@@ -495,7 +572,7 @@ function branchandbound_frob_matrixcomp(
         if split_flag
             if use_disjunctive_cuts
                 relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts;
+                    n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
                     disjunctive_cuts_type = disjunctive_cuts_type,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
@@ -504,27 +581,27 @@ function branchandbound_frob_matrixcomp(
             else               
                 if branching_region == "box"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts; 
+                        n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
                     )
                 elseif branching_region == "angular"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts; 
+                        n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
                     )
                 elseif branching_region == "polyhedral"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts; 
+                        n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region, 
                         polyhedra = polyhedra,
                     )
                 elseif branching_region == "hybrid"
                     relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, X_indices, γ, λ, noise, use_disjunctive_cuts; 
+                        n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts; 
                         branching_region = branching_region,
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper, 
@@ -1244,7 +1321,7 @@ function relax_frob_matrixcomp(
     k::Int,
     A::Array{Float64,2},
     indices::BitMatrix, # for objective computation
-    X_indices::BitMatrix, # for coupling constraints, in the noiseless case
+    indices_presolved::BitMatrix, # for coupling constraints, in the noiseless case
     γ::Float64,
     λ::Float64,
     noise::Bool,
@@ -1303,12 +1380,12 @@ function relax_frob_matrixcomp(
             """)
         end
     end
-    
+
     if !(
         size(U_lower) == (n,k)
         && size(U_upper) == (n,k)
-        && size(A, 1) == size(indices, 1) == n
-        && size(A, 2) == size(indices, 2)
+        && size(A, 1) == size(indices, 1) == size(indices_presolved, 1) == n
+        && size(A, 2) == size(indices, 2) == size(indices_presolved, 2) 
         && (
             isnothing(polyhedra)
             || size(polyhedra, 1) == k
@@ -1320,6 +1397,7 @@ function relax_frob_matrixcomp(
         Input matrix U_upper must have size (n, k); 
         Input matrix A must have size (n, m);
         Input matrix indices must have size (n, m);
+        Input matrix indices_presolved must have size (n, m);
         If provided, input vector polyhedra must have size (k,).""")
     end
 
@@ -1341,8 +1419,8 @@ function relax_frob_matrixcomp(
 
     # If noiseless, coupling constraints between X and A
     if !noise
-        for i in 1:n, j in 1:k
-            if X_indices[i,j]
+        for i in 1:n, j in 1:m
+            if indices_presolved[i,j]
                 @constraint(model, X[i,j] == A[i,j])
             end
         end
@@ -2572,17 +2650,31 @@ end
 
 function rank1_presolve(
     indices::BitMatrix,
+    A::Array{Float64, 2},
 )
-    X_indices = copy(indices)
+    indices_presolved = copy(indices)
     (n, m) = size(indices)
+    X_presolved = zeros(Float64, (n, m))
+    X_presolved[indices] = A[indices]
 
     for j0 in 1:n
-        selected_rows = findall(X_indices[:,j0])
+        selected_rows = findall(indices_presolved[:,j0])
         if length(selected_rows) > 1
-            rows_or = any(X_indices[selected_rows, :], dims=1)
-            X_indices[selected_rows, :] .= rows_or
+            rows_or = any(indices_presolved[selected_rows, :], dims=1)
+            for j in findall(vec(rows_or))
+                if j == j0
+                    continue
+                end
+                i0 = selected_rows[findfirst(indices_presolved[selected_rows, j])]
+                for i in selected_rows
+                    if !indices_presolved[i,j]
+                        X_presolved[i,j] = X_presolved[i,j0] * X_presolved[i0,j] / X_presolved[i0,j0]
+                        indices_presolved[i,j] = true
+                    end
+                end
+            end
         end
     end
 
-    return X_indices
+    return indices_presolved, X_presolved
 end
