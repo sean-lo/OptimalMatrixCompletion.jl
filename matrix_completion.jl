@@ -1747,14 +1747,7 @@ function relax_frob_matrixcomp(
         @objective(
             model,
             Min,
-            sum(Θ[i, i] for i = 1:m)
-            + λ * sum(Y[i, i] for i = 1:n)
-        )
-    else
-        @objective(
-            model,
-            Min,
-            (1 / 2) * sum(
+            (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m)
                 (X[i, j] - A[i, j])^2 * indices[i, j] 
                 for i = 1:n, j = 1:m
             ) 
