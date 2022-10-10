@@ -9,6 +9,7 @@ using Suppressor
 using DataFrames
 using OrderedCollections
 using Parameters
+using Combinatorics
 
 using JuMP
 using MathOptInterface
@@ -50,6 +51,8 @@ function branchandbound_frob_matrixcomp(
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing, # either "smallest_1_eigvec" or "smallest_2_eigvec"
     presolve::Bool = false,
+    add_basis_pursuit_valid_inequalities::Bool = false,
+    add_Shor_valid_inequalities::Bool = false,
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     use_max_steps::Bool = false,
@@ -455,6 +458,38 @@ function branchandbound_frob_matrixcomp(
     minimum_lower_bounds = Inf
     ancestry = Dict{Int, Vector{Int}}()
 
+    if !noise
+        if add_basis_pursuit_valid_inequalities
+            if presolve
+                # compute indices for valid inequalities
+                if k == 1
+                    linear_coupling_constraints_indexes = generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved)
+                else
+                    linear_coupling_constraints_indexes = [] # TODO
+                end
+            else
+                linear_coupling_constraints_indexes = [] # TODO
+            end
+        else
+            linear_coupling_constraints_indexes = []
+        end
+    end
+
+    if add_Shor_valid_inequalities
+        if k == 1
+            if !noise
+                Shor_constraints_indexes = generate_rank1_basis_pursuit_Shor_constraints_indexes(indices_presolved, 1)
+            else
+                Shor_constraints_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(indices_presolved, [1, 2, 3, 4])
+            end
+        else
+            Shor_constraints_indexes = [] # TODO
+        end
+    else
+        Shor_constraints_indexes = [] # TODO
+    end
+
+
     while (
         now_gap > gap 
         && !(use_max_steps && (counter ≥ max_steps))
@@ -572,14 +607,27 @@ function branchandbound_frob_matrixcomp(
         # solve SDP relaxation of master problem
         if split_flag
             if use_disjunctive_cuts
-                relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
-                    disjunctive_cuts_type = disjunctive_cuts_type,
-                    U_lower = current_node.U_lower, 
-                    U_upper = current_node.U_upper,
-                    matrix_cuts = current_node.matrix_cuts,
-                )
-            else               
+                if !noise
+                    relax_result = @suppress relax_frob_matrixcomp(
+                        n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
+                        disjunctive_cuts_type = disjunctive_cuts_type,
+                        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
+                        linear_coupling_constraints_indexes = linear_coupling_constraints_indexes,
+                        add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+                        Shor_constraints_indexes = Shor_constraints_indexes,
+                        matrix_cuts = current_node.matrix_cuts,
+                    )
+                else
+                    relax_result = @suppress relax_frob_matrixcomp(
+                        n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
+                        disjunctive_cuts_type = disjunctive_cuts_type,
+                        add_basis_pursuit_valid_inequalities = false,
+                        add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+                        Shor_constraints_indexes = Shor_constraints_indexes,
+                        matrix_cuts = current_node.matrix_cuts,
+                    )
+                end
+            else
                 if branching_region == "box"
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts; 
@@ -1330,6 +1378,10 @@ function relax_frob_matrixcomp(
     ;
     branching_region::Union{String, Nothing} = nothing,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
+    add_basis_pursuit_valid_inequalities::Bool = false, # FIXME: still unstable
+    linear_coupling_constraints_indexes::Union{Vector, Nothing} = nothing,
+    add_Shor_valid_inequalities::Bool = false, # FIXME: still unstable
+    Shor_constraints_indexes::Union{Vector, Nothing} = nothing,
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
         U_lower[end,:] .= 0.0
@@ -1417,12 +1469,18 @@ function relax_frob_matrixcomp(
     if !use_disjunctive_cuts
         @variable(model, t[1:n, 1:k, 1:k])
     end
+    if use_disjunctive_cuts && add_Shor_valid_inequalities
+        @variable(model, W[1:n, 1:m] ≥ 0)
+    end
 
     # If noiseless, coupling constraints between X and A
-    if !noise
+    if use_disjunctive_cuts && !noise
         for i in 1:n, j in 1:m
             if indices_presolved[i,j]
                 @constraint(model, X[i,j] == A[i,j])
+                if add_Shor_valid_inequalities
+                    @constraint(model, W[i,j] == A[i,j]^2)
+                end
             end
         end
     end
@@ -1667,6 +1725,59 @@ function relax_frob_matrixcomp(
             t[i,j1,j2] == 0.0
         )
     end
+
+    if !noise && add_basis_pursuit_valid_inequalities
+        if k == 1
+            # linear coupling constraints
+            for ((i1, i2, j1, j2), b) in linear_coupling_constraints_indexes
+                if b == (1, 1, 0, 0)
+                    @constraint(model, A[i1,j1] * X[i2,j2] == A[i1,j2] * X[i2,j1])
+                elseif b == (0, 0, 1, 1)
+                    @constraint(model, A[i2,j1] * X[i1,j2] == A[i2,j2] * X[i1,j1])
+                elseif b == (1, 0, 1, 0)
+                    @constraint(model, A[i1,j1] * X[i2,j2] == A[i2,j1] * X[i1,j2])
+                elseif b == (0, 1, 0, 1)
+                    @constraint(model, A[i1,j2] * X[i2,j1] == A[i2,j2] * X[i1,j1])
+                end
+            end
+        end
+    end
+
+    if add_Shor_valid_inequalities
+        if k == 1
+            @variable(model, V1[1:n, combinations(1:m, 2)])
+            @variable(model, V2[combinations(1:n, 2), 1:m])
+            @variable(model, V3[combinations(1:n, 2), combinations(1:m, 2)])
+            @constraint(
+                model, 
+                [i=1:n, j=1:m],
+                [0.5, W[i,j], X[i,j]] in RotatedSecondOrderCone()
+            ) # FIXME: only implement for W in which we have no information
+            @constraint(
+                    model,
+                    [j=1:m],
+                    Θ[j,j] == sum(W[i,j] for i in 1:n)
+                )
+            for j1 in 1:m, j2 in (j1+1):m    
+                @constraint(
+                    model,
+                    Θ[j1,j2] == sum(V1[i,[j1,j2]] for i in 1:n)
+                )
+            end
+            for (i1, i2, j1, j2) in Shor_constraints_indexes
+                @constraint(
+                    model, 
+                    LinearAlgebra.Symmetric([
+                        1           X[i1,j1]            X[i1,j2]            X[i2,j1]            X[i2,j2];
+                        X[i1,j1]    W[i1,j1]            V1[i1,[j1,j2]]      V2[[i1,i2],j1]      V3[[i1,i2],[j1,j2]];
+                        X[i1,j2]    V1[i1,[j1,j2]]      W[i1,j2]            V3[[i1,i2],[j1,j2]] V2[[i1,i2],j2];
+                        X[i2,j1]    V2[[i1,i2],j1]      V3[[i1,i2],[j1,j2]] W[i2,j1]            V1[i2,[j1,j2]];
+                        X[i2,j2]    V3[[i1,i2],[j1,j2]] V2[[i1,i2],j2]      V1[i2,[j1,j2]]      W[i2,j2];
+                    ]) in PSDCone()
+                )
+            end
+        end
+    end
     
     # 2-norm of columns of U are ≤ 1
     @constraint(
@@ -1683,12 +1794,32 @@ function relax_frob_matrixcomp(
             model,
             Min,
             (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m)
-                (X[i, j] - A[i, j])^2 * indices[i, j] 
-                for i = 1:n, j = 1:m
-            ) 
-            + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
             + λ * sum(Y[i, i] for i = 1:n)
         )
+    else
+        if add_Shor_valid_inequalities
+            @objective(
+                model,
+                Min,
+                (1 / 2) * sum(
+                    (A[i,j]^2 - 2 * A[i,j] * X[i,j] + W[i,j]) * indices[i, j] 
+                    for i = 1:n, j = 1:m
+                ) 
+                + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
+                + λ * sum(Y[i, i] for i = 1:n)
+            )
+        else
+            @objective(
+                model,
+                Min,
+                (1 / 2) * sum(
+                    (A[i,j] - X[i,j])^2 * indices[i, j] 
+                    for i = 1:n, j = 1:m
+                ) 
+                + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
+                + λ * sum(Y[i, i] for i = 1:n)
+            )
+        end
     end
 
     optimize!(model)
@@ -2613,4 +2744,206 @@ function rank1_presolve(
     end
 
     return indices_presolved, X_presolved
+end
+
+function generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(
+    indices_presolved::BitMatrix, # for coupling constraints, in the noiseless case
+)
+    # Used in basis pursuit: linear inequalities in rank-1
+    (n, m) = size(indices_presolved)
+
+    rowp = sortperm([findfirst(indices_presolved[i,:]) for i in 1:n])
+    colp = sortperm([findfirst(indices_presolved[rowp,j]) for j in 1:m])
+    rowind = unique([findfirst(indices_presolved[rowp, j]) for j in colp])
+    colind = unique([findfirst(indices_presolved[i, colp]) for i in rowp])
+
+    linear_coupling_constraints_indexes = []
+    for block_i in 1:length(rowind), block_j in 1:length(colind)
+        if block_i == block_j
+            continue
+        end
+        i_start = rowind[block_i]
+        i_end = (
+            block_i == length(rowind)
+            ? n
+            : rowind[block_i+1]-1
+        )
+        j_start = colind[block_j]
+        j_end = (
+            block_j == length(colind)
+            ? m
+            : colind[block_j+1]-1
+        )
+        j_ref = colind[block_i]
+        i_ref = rowind[block_j]
+        if (i_end > i_start)
+            for i in (i_start+1):i_end, j in j_start:j_end
+                if j_ref < j
+                    push!(linear_coupling_constraints_indexes, (
+                        (rowp[i_start], rowp[i], colp[j_ref], colp[j]),
+                        (1, 0, 1, 0)
+                    ))
+                else
+                    push!(linear_coupling_constraints_indexes, (
+                        (rowp[i_start], rowp[i], colp[j], colp[j_ref]),
+                        (0, 1, 0, 1) 
+                    ))
+                end
+            end
+        end
+        if (j_end > j_start)
+            for j in (j_start+1):j_end
+                if i_ref < i_start
+                    push!(linear_coupling_constraints_indexes, (
+                        (rowp[i_ref], rowp[i_start], colp[j_start], colp[j]),
+                        (1, 1, 0, 0)
+                    ))
+                else
+                    push!(linear_coupling_constraints_indexes, (
+                        (rowp[i_start], rowp[i_ref], colp[j_start], colp[j]),
+                        (0, 0, 1, 1)
+                    ))
+                end
+            end
+        end
+    end
+
+    return linear_coupling_constraints_indexes
+end
+
+function generate_rank1_basis_pursuit_Shor_constraints_indexes(
+    indices_presolved::BitMatrix, # for Shor indexes, in the noiseless case
+    num_entries_present::Int = 1 # Only makes sense to have num_entries_present == 1
+)
+    # Used in basis pursuit: Shor LMIs in rank-1
+    (n, m) = size(indices_presolved)
+
+    rowp = sortperm([findfirst(indices_presolved[i,:]) for i in 1:n])
+    colp = sortperm([findfirst(indices_presolved[rowp,j]) for j in 1:m])
+    rowind = unique([findfirst(indices_presolved[rowp, j]) for j in colp])
+    colind = unique([findfirst(indices_presolved[i, colp]) for i in rowp])
+
+    Shor_constraints_indexes = []
+    # One entry present
+    if num_entries_present == 1
+        for block_i1 in 1:(length(rowind)-1), block_i2 in (block_i1+1):length(rowind)
+            i1_start = rowind[block_i1]
+            i1_end = rowind[block_i1+1]-1
+            j_i1_start = colind[block_i1]
+            j_i1_end = colind[block_i1+1]-1
+            i2_start = rowind[block_i2]
+            i2_end = (
+                block_i2 == length(rowind) 
+                ? n
+                : rowind[block_i2+1]-1 
+            )
+            j_i2_start = colind[block_i2]
+            j_i2_end = (
+                block_i2 == length(rowind)
+                ? m
+                : colind[block_i2+1]-1
+            )        
+            for block_j in 1:length(colind)
+                # Ensures that block_j is not equal to either block_i1 or block_i2
+                if block_j in [block_i1, block_i2]
+                    continue
+                end
+                j1_start = colind[block_j]
+                j1_end = (
+                    block_j == length(colind) 
+                    ? m
+                    : colind[block_j+1]-1
+                )
+                append!(
+                    Shor_constraints_indexes,
+                    [
+                        (sort([rowp[i1], rowp[i2]])..., sort([colp[j1], colp[j2]])...)
+                        for i1 in i1_start:i1_end, i2 in i2_start:i2_end, j1 in j1_start:j1_end, j2 in vcat(j_i1_start:j_i1_end, j_i2_start:j_i2_end)
+                    ]
+                )
+            end
+        end
+    end
+    return Shor_constraints_indexes
+end
+
+function generate_rank1_matrix_completion_Shor_constraints_indexes(
+    indices::BitMatrix, # for Shor indexes, in the noisy case
+    num_entries_present_list::Vector{Int},
+)
+    # Used in basis pursuit: Shor LMIs in rank-1
+    (n, m) = size(indices)
+
+    Shor_constraints_indexes = []
+
+    for num_entries_present in num_entries_present_list
+        if num_entries_present == 4    
+            for i1 in 1:(n-1), i2 in (i1+1):n
+                for j1 in 1:(m-1)
+                    if indices[i1,j1] == 1 && indices[i2,j1] == 1
+                        # only looks for j2 after j1, 
+                        # where indices[i1,j2] == indices[i2,j2] == 1
+                        for j2 in findall(indices[i1,(j1+1):end] .& indices[i2,(j1+1):end])
+                            push!(Shor_constraints_indexes, (i1, i2, j1, j1+j2))
+                        end
+                    end
+                end
+            end
+        elseif num_entries_present == 3
+            for i1 in 1:(n-1), i2 in (i1+1):n
+                for j1 in 1:m
+                    if indices[i1,j1] == 1 && indices[i2,j1] == 1
+                        # Looks for j2 in 1:n, 
+                        # where indices[i1,j2] + indices[i2,j2] == 1
+                        for j2 in findall(indices[i1,:] .⊻ indices[i2,:])
+                            push!(Shor_constraints_indexes, (i1, i2, sort([j1, j2])...))
+                        end
+                    end
+                end
+            end
+        elseif num_entries_present == 2
+            # (a): [1 0; 1 0] and [0 1; 0 1]
+            for i1 in 1:(n-1), i2 in (i1+1):n
+                for j1 in 1:m
+                    if indices[i1,j1] == 1 && indices[i2,j1] == 1
+                        for j2 in findall(.~(indices[i1,:] .| indices[i2,:]))
+                            push!(Shor_constraints_indexes, (i1, i2, sort([j1, j2])...))
+                        end
+                    end
+                end
+            end
+            # (b): all other cases
+            for i1 in 1:(n-1), i2 in (i1+1):n
+                for (j1, j2) in combinations(findall(indices[i1,:] .⊻ indices[i2,:]), 2)
+                    push!(Shor_constraints_indexes, (i1, i2, j1, j2))
+                end
+            end
+        elseif num_entries_present == 1
+            for i1 in 1:(n-1), i2 in (i1+1):n
+                for j1 in 1:m
+                    if indices[i1,j1] + indices[i2,j1] == 1
+                        # Looks for j2 in 1:n, 
+                        # where indices[i1,j2] + indices[i2,j2] == 0
+                        for j2 in findall(.~(indices[i1,:] .| indices[i2,:]))
+                            push!(Shor_constraints_indexes, (i1, i2, sort([j1, j2])...))
+                        end
+                    end
+                end
+            end
+        elseif num_entries_present == 0
+            for i1 in 1:(n-1), i2 in (i1+1):n
+                for j1 in 1:(m-1)
+                    if indices[i1,j1] == indices[i2,j1] == 0
+                        # Looks for j2 in 1:n, 
+                        # where indices[i1,j2] + indices[i2,j2] == 0
+                        for j2 in findall(.~(indices[i1,(j1+1):end] .| indices[i2,(j1+1):end]))
+                            push!(Shor_constraints_indexes, (i1, i2, j1, j1+j2))
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return Shor_constraints_indexes
 end

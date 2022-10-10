@@ -21,6 +21,8 @@ function test_basis_pursuit_disjunctivecuts(
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing,
     disjunctive_sorting::Bool = false,
     presolve::Bool = false,
+    add_basis_pursuit_valid_inequalities::Bool = false,
+    add_Shor_valid_inequalities::Bool = false,
     root_only::Bool = false,
     altmin_flag::Bool = true,
     use_max_steps::Bool = true,
@@ -70,6 +72,8 @@ function test_basis_pursuit_disjunctivecuts(
         disjunctive_cuts_breakpoints = disjunctive_cuts_breakpoints,
         disjunctive_sorting = disjunctive_sorting,
         presolve = presolve,
+        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
+        add_Shor_valid_inequalities = add_Shor_valid_inequalities,
         root_only = root_only,
         altmin_flag = altmin_flag,
         use_max_steps = use_max_steps,
@@ -98,6 +102,7 @@ test_basis_pursuit_disjunctivecuts(
     disjunctive_cuts_type = "linear",
     disjunctive_cuts_breakpoints = "smallest_1_eigvec",
     presolve = false,
+    add_Shor_valid_inequalities = false,
     time_limit = 60,
 )
 test_basis_pursuit_disjunctivecuts(
@@ -106,6 +111,7 @@ test_basis_pursuit_disjunctivecuts(
     disjunctive_cuts_type = "linear",
     disjunctive_cuts_breakpoints = "smallest_1_eigvec",
     presolve = true,
+    add_Shor_valid_inequalities = false,
     time_limit = 60,
 )
 
