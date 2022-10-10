@@ -189,6 +189,11 @@ function branchandbound_frob_matrixcomp(
         depth = Int[],
         solve_time = Float64[],
     )
+    dict_num_iterations_altmin = DataFrame(
+        node_id = Int[],
+        depth = Int[],
+        n_iters = Int[],
+    )
     solve_time_relaxation_feasibility = 0.0
     solve_time_relaxation = 0.0
     dict_solve_times_relaxation = DataFrame(
@@ -284,6 +289,7 @@ function branchandbound_frob_matrixcomp(
         "time_taken" => 0.0,
         "solve_time_altmin" => solve_time_altmin,
         "dict_solve_times_altmin" => dict_solve_times_altmin,
+        "dict_num_iterations_altmin" => dict_num_iterations_altmin,
         "solve_time_relaxation_feasibility" => solve_time_relaxation_feasibility,
         "solve_time_relaxation" => solve_time_relaxation,
         "dict_solve_times_relaxation" => dict_solve_times_relaxation,
@@ -345,12 +351,13 @@ function branchandbound_frob_matrixcomp(
     if noise
         altmin_A_initial = zeros(n, m)
         altmin_A_initial[indices] = A[indices]
-        altmin_U_initial, _, _ = svd(altmin_A_initial)
+        altmin_U_initial = svd(altmin_A_initial).U[:,1:k]
 
         altmin_results = @suppress alternating_minimization(
             A, n, k, indices, γ, λ, use_disjunctive_cuts
             ;
             disjunctive_cuts_type = disjunctive_cuts_type,
+            disjunctive_sorting = disjunctive_sorting,
             U_initial = altmin_U_initial,
             matrix_cuts = [],
         )
@@ -763,6 +770,14 @@ function branchandbound_frob_matrixcomp(
                         current_node.node_id,
                         current_node.depth,
                         altmin_results_BB["solve_time"],
+                    ]
+                )
+                push!(
+                    dict_num_iterations_altmin,
+                    [
+                        current_node.node_id,
+                        current_node.depth,
+                        altmin_results_BB["n_iters"],
                     ]
                 )
                 X_local = altmin_results_BB["U"] * altmin_results_BB["V"]
@@ -1925,7 +1940,8 @@ function alternating_minimization(
     end,
     U_upper::Array{Float64,2} = ones(n,k),
     matrix_cuts::Union{Vector, Nothing} = nothing,
-    ϵ::Float64 = 1e-10,
+    ϵ::Float64 = 1e-6,
+    orthogonality_tolerance::Float64 = 1e-8,
     max_iters::Int = 10000,
 )
     # Note: only used in the noisy case
@@ -1948,6 +1964,24 @@ function alternating_minimization(
 
     # impose linear constraints on U (but not jointly in U and Y)
     if use_disjunctive_cuts
+        # Second-order-cone approximation of 2 x 2 minors of U'U ⪯ I (Atamturk, Gomez)
+        @constraint(
+            model_U,
+            [j1 = 1:(k-1), j2 = (j1+1):k],
+            [
+                sqrt(2);
+                U[:,j1] + U[:,j2]
+            ] in SecondOrderCone()
+        )
+        @constraint(
+            model_U,
+            [j1 = 1:(k-1), j2 = (j1+1):k],
+            [
+                sqrt(2);
+                U[:,j1] - U[:,j2]
+            ] in SecondOrderCone()
+        )
+
         # Linear constraints on U due to disjunctions
         if length(matrix_cuts) > 0
             L = length(matrix_cuts)
@@ -2059,63 +2093,90 @@ function alternating_minimization(
                 end
             end
         end
+    else
+        # McCormick inequalities at U_lower and U_upper here
+        @constraint(
+            model_U,
+            [i = 1:n, j1 = 1:k, j2 = j1:k],
+            t[i, j1, j2] ≥ (
+                U_lower[i, j2] * U[i, j1] 
+                + U_lower[i, j1] * U[i, j2] 
+                - U_lower[i, j1] * U_lower[i, j2]
+            )
+        )
+        @constraint(
+            model_U,
+            [i = 1:n, j1 = 1:k, j2 = j1:k],
+            t[i, j1, j2] ≥ (
+                U_upper[i, j2] * U[i, j1] 
+                + U_upper[i, j1] * U[i, j2] 
+                - U_upper[i, j1] * U_upper[i, j2]
+            )
+        )
+        @constraint(
+            model_U,
+            [i = 1:n, j1 = 1:k, j2 = j1:k],
+            t[i, j1, j2] ≤ (
+                U_upper[i, j2] * U[i, j1] 
+                + U_lower[i, j1] * U[i, j2] 
+                - U_lower[i, j1] * U_upper[i, j2]
+            )
+        )
+        @constraint(
+            model_U,
+            [i = 1:n, j1 = 1:k, j2 = j1:k],
+            t[i, j1, j2] ≤ (
+                U_lower[i, j2] * U[i, j1] 
+                + U_upper[i, j1] * U[i, j2] 
+                - U_upper[i, j1] * U_lower[i, j2]
+            )
+        )
+
+        # Orthogonality constraints U'U = I using new variables
+        for j1 = 1:k, j2 = j1:k
+            if (j1 == j2)
+                @constraint(
+                    model_U,
+                    sum(t[i, j1, j2] for i = 1:n) ≤ 1.0 + orthogonality_tolerance
+                )
+                @constraint(
+                    model_U,
+                    sum(t[i, j1, j2] for i = 1:n) ≥ 1.0 - orthogonality_tolerance
+                )
+            else
+                @constraint(
+                    model_U,
+                    sum(t[i, j1, j2] for i = 1:n) ≤ 0.0 + orthogonality_tolerance
+                )
+                @constraint(
+                    model_U,
+                    sum(t[i, j1, j2] for i = 1:n) ≥ 0.0 - orthogonality_tolerance
+                )
+            end
+        end
+
+        @constraint(
+            model_U,
+            [i = 1:n, j1 = 2:k, j2 = 1:(j1-1)],
+            t[i,j1,j2] == 0.0
+        )
     end
 
+    # 2-norm of columns of U are ≤ 1
     @constraint(
         model_U,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≥ (
-            U_lower[i, j2] * U[i, j1] 
-            + U_lower[i, j1] * U[i, j2] 
-            - U_lower[i, j1] * U_lower[i, j2]
-        )
+        [j = 1:k],
+        [
+            1;
+            U[:,j]
+        ] in SecondOrderCone()
     )
-    @constraint(
-        model_U,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≥ (
-            U_upper[i, j2] * U[i, j1] 
-            + U_upper[i, j1] * U[i, j2] 
-            - U_upper[i, j1] * U_upper[i, j2]
-        )
-    )
-    @constraint(
-        model_U,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≤ (
-            U_upper[i, j2] * U[i, j1] 
-            + U_lower[i, j1] * U[i, j2] 
-            - U_lower[i, j1] * U_upper[i, j2]
-        )
-    )
-    @constraint(
-        model_U,
-        [i = 1:n, j1 = 1:k, j2 = j1:k],
-        t[i, j1, j2] ≤ (
-            U_lower[i, j2] * U[i, j1] 
-            + U_upper[i, j1] * U[i, j2] 
-            - U_upper[i, j1] * U_lower[i, j2]
-        )
-    )
-    # Orthogonality constraints U'U = I using new variables
-    for j1 = 1:k, j2 = j1:k
-        if (j1 == j2)
-            @constraint(
-                model_U,
-                sum(t[i, j1, j2] for i = 1:n) == 1.0
-            )
-        else
-            @constraint(
-                model_U,
-                sum(t[i, j1, j2] for i = 1:n) == 0.0
-            )
-        end
-    end
     
     model_V = Model(() -> Gurobi.Optimizer(GRB_ENV))
     set_silent(model_V)
     @variable(model_V, V[1:k, 1:m])
 
+    objectives = []
     while counter < max_iters
         counter += 1
         # Optimize over V, given U 
@@ -2158,8 +2219,17 @@ function alternating_minimization(
 
         objective_new = objective_value(model_U)
         
-        objective_diff = abs(objective_new - objective_current)
+        push!(objectives, objective_new)
+        objective_diff = abs((objective_new - objective_current) / objective_current)
         if objective_diff < ϵ # objectives don't oscillate!
+            break
+        elseif (
+            length(objectives) > 5
+            && all(
+                (objectives[end-i] > objectives[end-5])
+                for i in 0:4
+            )
+        )
             break
         end
         U_current = U_new
@@ -2173,6 +2243,7 @@ function alternating_minimization(
         "U" => U_new, 
         "V" => V_new, 
         "solve_time" => (altmin_end_time - altmin_start_time),
+        "n_iters" => counter,
     )
 end
 
