@@ -744,10 +744,7 @@ function branchandbound_frob_matrixcomp(
         )
         if split_flag
             if altmin_flag_now
-                # TODO: check if it's not extremely close to projs already
-                # round Y, obtaining a Y_rounded
-                U_rounded = cholesky(relax_result["Y"]).U[1:k, 1:n]'
-                Y_rounded = U_rounded * U_rounded'
+                U_rounded = svd(relax_result["Y"]).U[:,1:k] # NOTE: need not be in disjunctive regions for $U$
                 if use_disjunctive_cuts
                     altmin_results_BB = @suppress alternating_minimization(
                         A, n, k, indices, γ, λ, use_disjunctive_cuts;
