@@ -151,36 +151,68 @@ function branchandbound_frob_matrixcomp(
         """)
     end
     
+    max_altmin_probability = 1.0
+    min_altmin_probability = 0.01
+
     log_time = Dates.now()
     Random.seed!(0)
 
     (n, m) = size(A)
     printlist = []
-    add_message!(printlist, [
-        Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), "\n",
-        "Starting branch-and-bound on a matrix completion problem.\n",
-        Printf.@sprintf("k:                        %15d\n", k),
-        Printf.@sprintf("m:                        %15d\n", m),
-        Printf.@sprintf("n:                        %15d\n", n),
-        Printf.@sprintf("num_indices:              %15d\n", sum(indices)),
-        Printf.@sprintf("γ:                        %15g\n", γ),
-        Printf.@sprintf("λ:                        %15g\n", λ),
-        Printf.@sprintf("Branching region:         %15s\n", branching_region),
-        Printf.@sprintf("Branching type:           %15s\n", branching_type),
-        Printf.@sprintf("Branching point:          %15s\n", branch_point),
-        Printf.@sprintf("Node selection:           %15s\n", node_selection),
-        Printf.@sprintf("Use disjunctive cuts?:    %15s\n", use_disjunctive_cuts),
-        Printf.@sprintf("Disjunctive cuts type:    %15s\n", disjunctive_cuts_type),
-        Printf.@sprintf("Disjunction breakpoints:  %15s\n", disjunctive_cuts_breakpoints),
-        Printf.@sprintf("Use valid inequalities?:  %15s\n", add_lasserre_valid_inequalities),
-        Printf.@sprintf("Optimality gap:           %15g\n", gap),
-        Printf.@sprintf("Cap on nodes?             %15s\n", use_max_steps),
-        Printf.@sprintf("Maximum nodes:            %15d\n", max_steps),
-        Printf.@sprintf("Time limit (s):           %15d\n", time_limit),
-    ])
 
-    max_altmin_probability = 1.0
-    min_altmin_probability = 0.01
+    add_message!(printlist, [
+        Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), 
+        "\n",
+        (noise ? 
+        "Starting branch-and-bound on a (noisy) matrix completion problem.\n" :
+        "Starting branch-and-bound on a (noiseless) basis pursuit problem.\n"),
+        Printf.@sprintf("k:                                         %15d\n", k),
+        Printf.@sprintf("m:                                         %15d\n", m),
+        Printf.@sprintf("n:                                         %15d\n", n),
+        Printf.@sprintf("num_indices:                               %15d\n", sum(indices)),
+        (
+            noise 
+            ? Printf.@sprintf("(Noisy) γ:                                 %15g\n", γ) : ""
+        ),
+        Printf.@sprintf("λ:                                         %15g\n", λ),
+        "\n",
+        Printf.@sprintf("Node selection:                            %15s\n", node_selection),
+        (node_selection == "bestfirst_depthfirst" ?
+        Printf.@sprintf("Bestfirst-depthfirst cutoff:               %15s\n", bestfirst_depthfirst_cutoff) : ""),
+        Printf.@sprintf("Optimality gap:                            %15g\n", gap),
+        Printf.@sprintf("Only solve root node?:                     %15s\n", root_only),
+        (!root_only && noise ?
+        Printf.@sprintf("(Noisy) Do altmin at child nodes?:         %15s\n", altmin_flag) : ""),
+        (!root_only && noise && altmin_flag ? 
+        Printf.@sprintf("(Noisy) Max altmin probability:            %15s\n", max_altmin_probability) : ""),
+        (!root_only && noise && altmin_flag ? 
+        Printf.@sprintf("(Noisy) Min altmin probability:            %15s\n", min_altmin_probability) : ""),
+        Printf.@sprintf("Cap on nodes?                              %15s\n", use_max_steps),
+        (use_max_steps ?
+        Printf.@sprintf("Maximum nodes:                             %15d\n", max_steps) : ""),
+        Printf.@sprintf("Time limit (s):                            %15d\n", time_limit),
+        "\n",
+    ])
+    if use_disjunctive_cuts
+        add_message!(printlist, [
+            Printf.@sprintf("Use disjunctive cuts?:                     %15s\n", use_disjunctive_cuts),
+            Printf.@sprintf("Disjunctive cuts type:                     %15s\n", disjunctive_cuts_type),
+            Printf.@sprintf("Disjunction breakpoints:                   %15s\n", disjunctive_cuts_breakpoints),
+            Printf.@sprintf("Apply disjunctive sorting?:                %15s\n", disjunctive_sorting),
+            (!noise ? 
+            Printf.@sprintf("(Basis pursuit) Apply presolve?:           %15s\n", presolve) : ""),
+            (!noise ? 
+            Printf.@sprintf("(Basis pursuit) Apply valid inequalities?: %15s\n", add_basis_pursuit_valid_inequalities) : ""),
+            Printf.@sprintf("Use Shor LMI inequalities?:                %15s\n", add_Shor_valid_inequalities),
+        ])
+    else
+        add_message!(printlist, [
+            Printf.@sprintf("Use disjunctive cuts?:                     %15s\n", use_disjunctive_cuts),
+            Printf.@sprintf("Branching region:                          %15s\n", branching_region),
+            Printf.@sprintf("Branching type:                            %15s\n", branching_type),
+            Printf.@sprintf("Branching point:                           %15s\n", branch_point),
+        ])
+    end
 
     start_time = time()
     solve_time_altmin = 0.0
@@ -260,6 +292,7 @@ function branchandbound_frob_matrixcomp(
         runtime = Float64[],
     )
     instance["run_details"] = OrderedDict(
+        "noise" => noise,
         "k" => k,
         "m" => m,
         "n" => n,
@@ -268,21 +301,26 @@ function branchandbound_frob_matrixcomp(
         "num_indices" => convert(Int, round(sum(indices))),
         "γ" => γ,
         "λ" => λ,
-        "branching_region" => branching_region,
-        "branching_type" => branching_type,
-        "branch_point" => branch_point,
         "node_selection" => node_selection,
         "bestfirst_depthfirst_cutoff" => bestfirst_depthfirst_cutoff,
-        "use_disjunctive_cuts" => use_disjunctive_cuts,
-        "disjunctive_cuts_type" => disjunctive_cuts_type,
-        "disjunctive_cuts_breakpoints" => disjunctive_cuts_breakpoints,
-        "add_lasserre_valid_inequalities" => add_lasserre_valid_inequalities,
         "optimality_gap" => gap,
+        "root_only" => root_only,
+        "altmin_flag" => altmin_flag,
+        "max_altmin_probability" => max_altmin_probability,
+        "min_altmin_probability" => min_altmin_probability,
         "use_max_steps" => use_max_steps,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
-        "max_altmin_probability" => max_altmin_probability,
-        "min_altmin_probability" => min_altmin_probability,
+        "use_disjunctive_cuts" => use_disjunctive_cuts,
+        "disjunctive_cuts_type" => disjunctive_cuts_type,
+        "disjunctive_cuts_breakpoints" => disjunctive_cuts_breakpoints,
+        "disjunctive_sorting" => disjunctive_sorting,
+        "presolve" => presolve,
+        "add_basis_pursuit_valid_inequalities" => add_basis_pursuit_valid_inequalities,
+        "add_Shor_valid_inequalities" => add_Shor_valid_inequalities,
+        "branching_region" => branching_region,
+        "branching_type" => branching_type,
+        "branch_point" => branch_point,
         "log_time" => log_time,
         "start_time" => start_time,
         "end_time" => start_time,
@@ -340,8 +378,9 @@ function branchandbound_frob_matrixcomp(
                 "Solved in presolve stage.\n",
             ])            
             end_time = time()
+            time_taken = end_time - start_time
             instance["run_details"]["end_time"] = end_time
-            instance["run_details"]["time_taken"] = end_time - start_time
+            instance["run_details"]["time_taken"] = time_taken
             return solution, printlist, instance
         end
     else
@@ -407,7 +446,9 @@ function branchandbound_frob_matrixcomp(
         "X" => X_initial,
     )
 
-    ranges = []
+    if !use_disjunctive_cuts
+        ranges = []
+    end
     nodes = []
     upper = objective_initial
     lower = -Inf
@@ -1052,19 +1093,21 @@ function branchandbound_frob_matrixcomp(
                 )
                 last_updated_counter = counter
 
-                item = [
-                    current_node.node_id,
-                    current_node.U_lower,
-                    current_node.U_upper,
-                ]
-                if branching_region != "box"
-                    push!(
-                        item, 
-                        current_node.φ_lower, 
-                        current_node.φ_upper,
-                    )
+                if !use_disjunctive_cuts
+                    item = [
+                        current_node.node_id,
+                        current_node.U_lower,
+                        current_node.U_upper,
+                    ]
+                    if branching_region != "box"
+                        push!(
+                            item,
+                            current_node.φ_lower,
+                            current_node.φ_upper,
+                        )
+                    end
+                    push!(ranges, item)
                 end
-                push!(ranges, item)
                 if root_only
                     break
                 end
@@ -1079,95 +1122,60 @@ function branchandbound_frob_matrixcomp(
     solution["MSE_out"] = compute_MSE(solution["X"], A, indices, kind = "out") 
     solution["MSE_all"] = compute_MSE(solution["X"], A, indices, kind = "all")
 
-    instance["run_details"] = OrderedDict(
-        "k" => k,
-        "m" => m,
-        "n" => n,
-        "A" => A,
-        "indices" => indices,
-        "num_indices" => convert(Int, round(sum(indices))),
-        "γ" => γ,
-        "λ" => λ,
-        "branching_region" => branching_region,
-        "branching_type" => branching_type,
-        "branch_point" => branch_point,
-        "node_selection" => node_selection,
-        "use_disjunctive_cuts" => use_disjunctive_cuts,
-        "disjunctive_cuts_type" => disjunctive_cuts_type,
-        "optimality_gap" => gap,
-        "use_max_steps" => use_max_steps,
-        "max_steps" => max_steps,
-        "time_limit" => time_limit,
-        "max_altmin_probability" => max_altmin_probability,
-        "min_altmin_probability" => min_altmin_probability,
-        "log_time" => log_time,
-        "start_time" => start_time,
-        "end_time" => end_time,
-        "time_taken" => time_taken,
-        "solve_time_altmin" => solve_time_altmin,
-        "dict_solve_times_altmin" => dict_solve_times_altmin,
-        "solve_time_relaxation_feasibility" => solve_time_relaxation_feasibility,
-        "solve_time_relaxation" => solve_time_relaxation,
-        "dict_solve_times_relaxation" => dict_solve_times_relaxation,
-        "solve_time_U_ranges" => solve_time_U_ranges,
-        "solve_time_polyhedra" => solve_time_polyhedra,
-        "nodes_explored" => nodes_explored,
-        "nodes_total" => counter,
-        "nodes_dominated" => nodes_dominated,
-        "nodes_relax_infeasible" => nodes_relax_infeasible,
-        "nodes_relax_feasible" => nodes_relax_feasible,
-        "nodes_relax_feasible_pruned" => nodes_relax_feasible_pruned,
-        "nodes_master_feasible" => nodes_master_feasible,
-        "nodes_master_feasible_improvement" => nodes_master_feasible_improvement,
-        "nodes_relax_feasible_split" => nodes_relax_feasible_split,
-        "nodes_relax_feasible_split_altmin" => nodes_relax_feasible_split_altmin,
-        "nodes_relax_feasible_split_altmin_improvement" => nodes_relax_feasible_split_altmin_improvement,
-    )
-    push!(
-        printlist, 
-        "\n\nRun details:\n"
-    )
-    for (k, v) in instance["run_details"]
-        if startswith(k, "nodes")
-            note = Printf.@sprintf(
-                "%33s: %10d\n",
-                k, v,
-            )
-        elseif startswith(k, "time") || startswith(k, "solve_time")
-            note = Printf.@sprintf(
-                "%33s: %10.3f\n",
-                k, v,
-            )
-        else
-            note = Printf.@sprintf(
-                "%33s: %s\n",
-                k, v,
-            )
-        end
-        push!(printlist, note)
-    end
+    instance["run_details"]["end_time"] = end_time
+    instance["run_details"]["time_taken"] = time_taken
+    instance["run_details"]["solve_time_altmin"] = solve_time_altmin
+    instance["run_details"]["dict_solve_times_altmin"] = dict_solve_times_altmin
+    instance["run_details"]["dict_num_iterations_altmin"] = dict_num_iterations_altmin
+    instance["run_details"]["solve_time_relaxation_feasibility"] = solve_time_relaxation_feasibility
+    instance["run_details"]["solve_time_relaxation"] = solve_time_relaxation
+    instance["run_details"]["dict_solve_times_relaxation"] = dict_solve_times_relaxation
+    instance["run_details"]["solve_time_U_ranges"] = solve_time_U_ranges
+    instance["run_details"]["solve_time_polyhedra"] = solve_time_polyhedra
 
-    for item in ranges
-        push!(
-            printlist,
-            Printf.@sprintf("\n\nnode_id: %10d\n", item[1]),
-            "\nU_lower:\n",
-            sprint(show, "text/plain", item[2]),
-            "\nU_upper:\n",
-            sprint(show, "text/plain", item[3]),
-        )
-        if branching_region != "box"
-            push!(
-                printlist,
-                "\nφ_lower:\n",
-                sprint(show, "text/plain", item[4]),
-                "\nφ_upper:\n",
-                sprint(show, "text/plain", item[5]),
-            )
+    instance["run_details"]["nodes_explored"] = nodes_explored
+    instance["run_details"]["nodes_total"] = counter
+    instance["run_details"]["nodes_dominated"] = nodes_dominated
+    instance["run_details"]["nodes_relax_infeasible"] = nodes_relax_infeasible
+    instance["run_details"]["nodes_relax_feasible"] = nodes_relax_feasible
+    instance["run_details"]["nodes_relax_feasible_pruned"] = nodes_relax_feasible_pruned
+    instance["run_details"]["nodes_master_feasible"] = nodes_master_feasible
+    instance["run_details"]["nodes_master_feasible_improvement"] = nodes_master_feasible_improvement
+    instance["run_details"]["nodes_relax_feasible_split"] = nodes_relax_feasible_split
+    instance["run_details"]["nodes_relax_feasible_split_altmin"] = nodes_relax_feasible_split_altmin
+    instance["run_details"]["nodes_relax_feasible_split_altmin_improvement"] = nodes_relax_feasible_split_altmin_improvement
+
+    add_message!(printlist, ["\n\nRun details:\n"])
+    add_message!(printlist, [
+        if startswith(k, "nodes")
+            Printf.@sprintf("%46s: %10d\n", k, v)
+        elseif startswith(k, "time") || startswith(k, "solve_time")
+            Printf.@sprintf("%46s: %10.3f\n", k, v)
+        else
+            Printf.@sprintf("%46s: %s\n", k, v)
+        end
+        for (k, v) in instance["run_details"]
+    ])
+    if !use_disjunctive_cuts
+        for item in ranges
+            add_message!(printlist, [
+                Printf.@sprintf("\n\nnode_id: %10d\n", item[1]),
+                "\nU_lower:\n",
+                sprint(show, "text/plain", item[2]),
+                "\nU_upper:\n",
+                sprint(show, "text/plain", item[3]),
+            ])
+            if branching_region != "box"
+                add_message!(printlist, [
+                    "\nφ_lower:\n",
+                    sprint(show, "text/plain", item[4]),
+                    "\nφ_upper:\n",
+                    sprint(show, "text/plain", item[5]),
+                ])
+            end                
         end
     end
-    push!(
-        printlist,
+    add_message!(printlist, [
         "\n--------------------------------\n",
         "\n\nInitial solution (warm start):\n",
         sprint(show, "text/plain", objective_initial),
@@ -1191,7 +1199,7 @@ function branchandbound_frob_matrixcomp(
         sprint(show, "text/plain", solution["MSE_in"]),
         "\n\nMSE of unsampled entries:\n",
         sprint(show, "text/plain", solution["MSE_out"]),
-    )
+    ])
 
     return solution, printlist, instance
 end
