@@ -730,9 +730,12 @@ function branchandbound_frob_matrixcomp(
         end
 
         # perform alternating minimization heuristic
-        altmin_probability = max(
-            max_altmin_probability / (2^current_node.depth),
-            min_altmin_probability
+        altmin_probability = (
+            current_node.depth > log2(max_altmin_probability / min_altmin_probability)
+            ?
+            min_altmin_probability 
+            :
+            max_altmin_probability / (2 ^ current_node.depth)
         )
         altmin_flag_now = (
             altmin_flag 
