@@ -50,6 +50,7 @@ function branchandbound_frob_matrixcomp(
     use_disjunctive_cuts::Bool = true,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing, # either "smallest_1_eigvec" or "smallest_2_eigvec"
+    disjunctive_sorting::Bool = false,
     presolve::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
@@ -611,6 +612,7 @@ function branchandbound_frob_matrixcomp(
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
+                        disjunctive_sorting = disjunctive_sorting,
                         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
                         linear_coupling_constraints_indexes = linear_coupling_constraints_indexes,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
@@ -621,6 +623,7 @@ function branchandbound_frob_matrixcomp(
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
+                        disjunctive_sorting = disjunctive_sorting,
                         add_basis_pursuit_valid_inequalities = false,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
                         Shor_constraints_indexes = Shor_constraints_indexes,
@@ -739,14 +742,14 @@ function branchandbound_frob_matrixcomp(
                     altmin_results_BB = @suppress alternating_minimization(
                         A, n, k, indices, γ, λ, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
+                        disjunctive_sorting = disjunctive_sorting,
                         U_initial = Matrix(U_rounded),
-                        U_lower = current_node.U_lower,
-                        U_upper = current_node.U_upper,
                         matrix_cuts = current_node.matrix_cuts,
                     )
                 else
                     altmin_results_BB = @suppress alternating_minimization(
                         A, n, k, indices, γ, λ, use_disjunctive_cuts;
+                        disjunctive_sorting = false,
                         U_initial = Matrix(U_rounded),
                         U_lower = current_node.U_lower,
                         U_upper = current_node.U_upper,
@@ -1378,6 +1381,7 @@ function relax_frob_matrixcomp(
     ;
     branching_region::Union{String, Nothing} = nothing,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
+    disjunctive_sorting::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false, # FIXME: still unstable
     linear_coupling_constraints_indexes::Union{Vector, Nothing} = nothing,
     add_Shor_valid_inequalities::Bool = false, # FIXME: still unstable
@@ -1508,123 +1512,157 @@ function relax_frob_matrixcomp(
     if use_disjunctive_cuts
         if length(matrix_cuts) > 0
             L = length(matrix_cuts)
-            if disjunctive_cuts_type == "linear"
-                @expression(
-                    model,
-                    matrix_cut[l=1:L],
-                    zero(AffExpr),
-                )
-                @variable(model, v[1:L, 1:k])
-                v̂ = zeros(L, k)
-                for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
-                    for j in 1:k
-                        @constraint(model, v[l,j] == Compat.dot(breakpoint_vec, U[:,j]))
-                        v̂[l,j] = Compat.dot(breakpoint_vec, Û[:,j])
-                        if directions[j] == "left"
-                            @constraint(model, -1 ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ v̂[l,j])
-                            add_to_expression!(
-                                matrix_cut[l],
-                                - v[l,j] + v̂[l,j] * v[l,j] + v̂[l,j],
-                            )
-                        elseif directions[j] == "right"
-                            @constraint(model, v̂[l,j] ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ 1)
-                            add_to_expression!(
-                                matrix_cut[l],
-                                + v[l,j] + v̂[l,j] * v[l,j] - v̂[l,j],
-                            )
+            if disjunctive_cuts_type in ["linear", "linear2", "linear3"]
+                if disjunctive_sorting
+                    @expression(
+                        model,
+                        matrix_cut[l=1:L],
+                        zero(AffExpr),
+                    ) # stores the RHS of the linear inequality in U and Y
+                    @variable(model, v[1:L, 1:k]) # stores sorted version of U'x
+                    v̂ = zeros(L, k) # stores (sorted) fitted Ű'x
+                    @variable(model, r[1:L, 1:k]) # dual variables
+                    @variable(model, y[1:L, 1:k, 1:k] ≥ 0) # dual variables
+                    @variable(model, w[1:L, 1:k]) # stores U'x
+                    @constraint(
+                        model,
+                        [l=1:L],
+                        sum(w[l,j] for j in 1:k) == sum(v[l,j] for j in 1:k)
+                    )
+                    # dual linear program of: (
+                    # max sum(z[l,j] * w[l,j] for j in 1:k)
+                    # such that sum(z[l,j] for j in 1:k) ≤ q    [r]
+                    # and z[l,j] ≤ 1 for each j                 [y]
+                    # ) for each q, and for each cut l
+                    @constraint(
+                        model, 
+                        [l=1:L, q=1:k],
+                        sum(v[l,j] for j in 1:q) 
+                        ≥ q * r[l,q] + sum(y[l,q,j] for j in 1:k)
+                    )
+                    @constraint(
+                        model,
+                        [l=1:L, q=1:k, j=1:k],
+                        w[l,j] ≤ y[l,q,j] + r[l,q]
+                    )
+                else
+                    @expression(
+                        model,
+                        matrix_cut[l=1:L],
+                        zero(AffExpr),
+                    ) # stores the RHS of the linear inequality in U and Y
+                    @variable(model, v[1:L, 1:k]) # stores U'x
+                    v̂ = zeros(L, k) # stores fitted Ű'x
+                end
+
+                # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
+                for (l, (breakpoint_vec, Û, _)) in enumerate(matrix_cuts)
+                    if disjunctive_sorting
+                        @constraint(
+                            model, 
+                            w[l,:] .== U' * breakpoint_vec,
+                        )
+                        v̂[l,:] = sort(Û' * breakpoint_vec, rev=true)
+                    else
+                        @constraint(
+                            model, 
+                            v[l,:] .== U' * breakpoint_vec,
+                        )
+                        v̂[l,:] = Û' * breakpoint_vec
+                    end
+                end
+                
+                # Constraints linking v to breakpoints
+                if disjunctive_cuts_type == "linear"   
+                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                        for j in 1:k
+                            if directions[j] == "left"
+                                @constraint(model, -1 ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ v̂[l,j])
+                                add_to_expression!(
+                                    matrix_cut[l],
+                                    - v[l,j] + v̂[l,j] * v[l,j] + v̂[l,j],
+                                )
+                            elseif directions[j] == "right"
+                                @constraint(model, v̂[l,j] ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ 1)
+                                add_to_expression!(
+                                    matrix_cut[l],
+                                    + v[l,j] + v̂[l,j] * v[l,j] - v̂[l,j],
+                                )
+                            end
                         end
                     end
+                elseif disjunctive_cuts_type == "linear2"
+                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                        for j in 1:k
+                            if directions[j] == "left"
+                                @constraint(model, -1 ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ - abs(v̂[l,j]))
+                                add_to_expression!(
+                                    matrix_cut[l], 
+                                    - v[l,j] - abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
+                                )
+                            elseif directions[j] == "middle"
+                                @constraint(model, - abs(v̂[l,j]) ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ abs(v̂[l,j]))
+                                add_to_expression!(
+                                    matrix_cut[l],
+                                    (v̂[l,j])^2,
+                                )
+                            elseif directions[j] == "right"
+                                @constraint(model, abs(v̂[l,j]) ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ 1)
+                                add_to_expression!(
+                                    matrix_cut[l],
+                                    + v[l,j] + abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
+                                )
+                            end
+                        end
+                    end
+                elseif disjunctive_cuts_type == "linear3"
+                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                        for j in 1:k
+                            if directions[j] == "left"
+                                @constraint(model, -1 ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ - abs(v̂[l,j]))
+                                add_to_expression!(
+                                    matrix_cut[l],
+                                    - v[l,j] - abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
+                                )
+                            elseif directions[j] == "inner_left"
+                                @constraint(model, - abs(v̂[l,j]) ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ 0)
+                                add_to_expression!(
+                                    matrix_cut[l],
+                                    - abs(v̂[l,j]) * v[l,j]
+                                )
+                            elseif directions[j] == "inner_right"
+                                @constraint(model, 0 ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ abs(v̂[l,j]))
+                                add_to_expression!(
+                                    matrix_cut[l],
+                                    abs(v̂[l,j]) * v[l,j]
+                                )
+                            elseif directions[j] == "right"
+                                @constraint(model, abs(v̂[l,j]) ≤ v[l,j])
+                                @constraint(model, v[l,j] ≤ 1)
+                                add_to_expression!(
+                                    matrix_cut[l],
+                                    + v[l,j] + abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
+                                )
+                            end
+                        end
+                    end
+                end
+
+                for (l, (breakpoint_vec, _, _)) in enumerate(matrix_cuts)
                     @constraint(
                         model,
                         matrix_cut[l] ≥ Compat.dot((breakpoint_vec * breakpoint_vec'), Y),
                     )
                 end
-            elseif disjunctive_cuts_type == "linear2"
-                @expression(
-                    model, 
-                    matrix_cut[l=1:L],
-                    zero(AffExpr),
-                )
-                @variable(model, v[1:L, 1:k])
-                v̂ = zeros(L, k)
-                for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
-                    for j in 1:k
-                        @constraint(model, v[l,j] == Compat.dot(breakpoint_vec, U[:,j]))
-                        v̂[l,j] = Compat.dot(breakpoint_vec, Û[:,j])
-                        if directions[j] == "left"
-                            @constraint(model, -1 ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ - abs(v̂[l,j]))
-                            add_to_expression!(matrix_cut[l], - v[l,j] - abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]))
-                        elseif directions[j] == "middle"
-                            @constraint(model, - abs(v̂[l,j]) ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ abs(v̂[l,j]))
-                            add_to_expression!(
-                                matrix_cut[l],
-                                (v̂[l,j])^2,
-                            )
-                        elseif directions[j] == "right"
-                            @constraint(model, abs(v̂[l,j]) ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ 1)
-                            add_to_expression!(
-                                matrix_cut[l],
-                                + v[l,j] + abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
-                            )
-                        end
-                    end
-                    @constraint(
-                        model,
-                        matrix_cut[l] ≥ Compat.dot((breakpoint_vec * breakpoint_vec'), Y),
-                    )
-                end
-            elseif disjunctive_cuts_type == "linear3"
-                @expression(
-                    model,
-                    matrix_cut[l=1:L],
-                    zero(AffExpr),
-                )
-                @variable(model, v[1:L, 1:k])
-                v̂ = zeros(L, k)
-                for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
-                    for j in 1:k
-                        @constraint(model, v[l,j] == Compat.dot(breakpoint_vec, U[:,j]))
-                        v̂[l,j] = Compat.dot(breakpoint_vec, Û[:,j])
-                        if directions[j] == "left"
-                            @constraint(model, -1 ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ - abs(v̂[l,j]))
-                            add_to_expression!(
-                                matrix_cut[l],
-                                - v[l,j] - abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
-                            )
-                        elseif directions[j] == "inner_left"
-                            @constraint(model, - abs(v̂[l,j]) ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ 0)
-                            add_to_expression!(
-                                matrix_cut[l],
-                                - abs(v̂[l,j]) * v[l,j]
-                            )
-                        elseif directions[j] == "inner_right"
-                            @constraint(model, 0 ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ abs(v̂[l,j]))
-                            add_to_expression!(
-                                matrix_cut[l],
-                                abs(v̂[l,j]) * v[l,j]
-                            )
-                        elseif directions[j] == "right"
-                            @constraint(model, abs(v̂[l,j]) ≤ v[l,j])
-                            @constraint(model, v[l,j] ≤ 1)
-                            add_to_expression!(
-                                matrix_cut[l],
-                                + v[l,j] + abs(v̂[l,j]) * v[l,j] - abs(v̂[l,j]),
-                            )
-                        end
-                    end
-                    @constraint(
-                        model,
-                        matrix_cut[l] ≥ Compat.dot((breakpoint_vec * breakpoint_vec'), Y),
-                    )
-                end
+
             elseif disjunctive_cuts_type == "linear_all"
                 for (breakpoint_vec, Û, basis) in matrix_cuts
                     # polyhedral constraints on U
@@ -1878,6 +1916,7 @@ function alternating_minimization(
     use_disjunctive_cuts::Bool,
     ;
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
+    disjunctive_sorting::Bool = false,
     U_initial::Matrix{Float64},
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
@@ -1908,114 +1947,99 @@ function alternating_minimization(
     @constraint(model_U, U .≥ U_lower)
 
     # impose linear constraints on U (but not jointly in U and Y)
-    if use_disjunctive_cuts 
+    if use_disjunctive_cuts
+        # Linear constraints on U due to disjunctions
         if length(matrix_cuts) > 0
-            if disjunctive_cuts_type == "linear"
-                for (breakpoint_vec, Û, directions) in matrix_cuts
-                    for j in 1:k
-                        if directions[j] == "left"
-                            @constraint(
-                                model_U, 
-                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]), 
-                            )
-                            @constraint(
-                                model_U, 
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ Compat.dot(breakpoint_vec, Û[:,j]), 
-                            )
-                        elseif directions[j] == "right"
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, Û[:,j]) 
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
-                            )
-                        end
+            L = length(matrix_cuts)
+            if disjunctive_cuts_type in ["linear", "linear2", "linear3"]
+                if disjunctive_sorting
+                    @variable(model_U, v[1:L, 1:k]) # stores sorted version of U'x
+                    v̂ = zeros(L, k) # stores (sorted) fitted Ű'x
+                    @variable(model_U, r[1:L, 1:k]) # dual variables
+                    @variable(model_U, y[1:L, 1:k, 1:k] ≥ 0) # dual variables
+                    @variable(model_U, w[1:L, 1:k]) # stores U'x
+                    @constraint(
+                        model_U,
+                        [l=1:L],
+                        sum(w[l,j] for j in 1:k) == sum(v[l,j] for j in 1:k)
+                    )
+                    @constraint(
+                        model_U, 
+                        [l=1:L, q=1:k],
+                        sum(v[l,j] for j in 1:q) 
+                        ≥ q * r[l,q] + sum(y[l,q,j] for j in 1:k)
+                    )
+                    @constraint(
+                        model_U,
+                        [l=1:L, q=1:k, j=1:k],
+                        w[l,j] ≤ y[l,q,j] + r[l,q]
+                    )
+                else
+                    @variable(model_U, v[1:L, 1:k]) # stores U'x
+                    v̂ = zeros(L, k) # stores fitted Ű'x
+                end
+
+                # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
+                for (l, (breakpoint_vec, Û, _)) in enumerate(matrix_cuts)
+                    if disjunctive_sorting
+                        @constraint(
+                            model_U, 
+                            w[l,:] .== U' * breakpoint_vec,
+                        )
+                        v̂[l,:] = sort(Û' * breakpoint_vec, rev=true)
+                    else
+                        @constraint(
+                            model_U, 
+                            v[l,:] .== U' * breakpoint_vec,
+                        )
+                        v̂[l,:] = Û' * breakpoint_vec
                     end
                 end
-            elseif disjunctive_cuts_type == "linear2"
-                for (breakpoint_vec, Û, directions) in matrix_cuts
-                    for j in 1:k
-                        if directions[j] == "left"
-                            @constraint(
-                                model_U,
-                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ - abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
-                        elseif directions[j] == "middle"
-                            @constraint(
-                                model_U,
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j]))
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
-                        elseif directions[j] == "right"
-                            @constraint(
-                                model_U,
-                                abs(Compat.dot(breakpoint_vec, Û[:,j]))
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
-                            )
+
+                # Constraints linking v to breakpoints
+                if disjunctive_cuts_type == "linear"   
+                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                        for j in 1:k
+                            if directions[j] == "left"
+                                @constraint(model_U, -1 ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ v̂[l,j])
+                            elseif directions[j] == "right"
+                                @constraint(model_U, v̂[l,j] ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ 1)
+                            end
                         end
                     end
-                end
-            elseif disjunctive_cuts_type == "linear3"
-                for (breakpoint_vec, Û, directions) in matrix_cuts
-                    for j in 1:k
-                        if directions[j] == "left"
-                            @constraint(
-                                model_U,
-                                -1 ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ - abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
-                        elseif directions[j] == "inner_left"
-                            @constraint(
-                                model_U,
-                                - abs(Compat.dot(breakpoint_vec, Û[:,j]))
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 0,
-                            )
-                        elseif directions[j] == "inner_right"
-                            @constraint(
-                                model_U,
-                                0 ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, U[:,j])
-                                ≤ abs(Compat.dot(breakpoint_vec, Û[:,j])),
-                            )
-                        elseif directions[j] == "right"
-                            @constraint(
-                                model_U,
-                                abs(Compat.dot(breakpoint_vec, Û[:,j]))
-                                ≤ Compat.dot(breakpoint_vec, U[:,j]),
-                            )
-                            @constraint(
-                                model_U,
-                                Compat.dot(breakpoint_vec, U[:,j]) ≤ 1,
-                            )
+                elseif disjunctive_cuts_type == "linear2"
+                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                        for j in 1:k
+                            if directions[j] == "left"
+                                @constraint(model_U, -1 ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ - abs(v̂[l,j]))
+                            elseif directions[j] == "middle"
+                                @constraint(model_U, - abs(v̂[l,j]) ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ abs(v̂[l,j]))
+                            elseif directions[j] == "right"
+                                @constraint(model_U, abs(v̂[l,j]) ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ 1)
+                            end
+                        end
+                    end
+                elseif disjunctive_cuts_type == "linear3"
+                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                        for j in 1:k
+                            if directions[j] == "left"
+                                @constraint(model_U, -1 ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ - abs(v̂[l,j]))
+                            elseif directions[j] == "inner_left"
+                                @constraint(model_U, - abs(v̂[l,j]) ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ 0)
+                            elseif directions[j] == "inner_right"
+                                @constraint(model_U, 0 ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ abs(v̂[l,j]))
+                            elseif directions[j] == "right"
+                                @constraint(model_U, abs(v̂[l,j]) ≤ v[l,j])
+                                @constraint(model_U, v[l,j] ≤ 1)
+                            end
                         end
                     end
                 end
