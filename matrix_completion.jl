@@ -8,6 +8,7 @@ using Dates
 using Suppressor
 using DataFrames
 using OrderedCollections
+using DataStructures
 using Parameters
 using Combinatorics
 
@@ -449,7 +450,7 @@ function branchandbound_frob_matrixcomp(
     if !use_disjunctive_cuts
         ranges = []
     end
-    nodes = []
+    nodes = Dict{Int, BBNode}()
     upper = objective_initial
     lower = -Inf
     if use_disjunctive_cuts
@@ -494,7 +495,7 @@ function branchandbound_frob_matrixcomp(
             )
         end
     end
-    push!(nodes, initial_node)
+    nodes[1] = initial_node
 
     add_message!(printlist, [
         "-----------------------------------------------------------------------------------\n",
@@ -503,7 +504,8 @@ function branchandbound_frob_matrixcomp(
     ])
 
     # leaves' mapping from node_id to lower_bound
-    lower_bounds = Dict{Int, Float64}() 
+    lower_bounds = PriorityQueue([1=>Inf])
+    node_ids = [1]
     minimum_lower_bounds = Inf
     ancestry = Dict{Int, Vector{Int}}()
 
@@ -556,16 +558,17 @@ function branchandbound_frob_matrixcomp(
             end
 
             if node_selection_here == "breadthfirst"
-                current_node = popfirst!(nodes)
+                id = popfirst!(node_ids)
+                delete!(lower_bounds, id)
+                current_node = pop!(nodes, id)
             elseif node_selection_here == "bestfirst"
-                # break ties by depth-first search (choosing the node most recently added to queue)
-                (min_LB, min_LB_index) = findmin(node.LB for node in reverse(nodes))
-                current_node = popat!(
-                    nodes, 
-                    length(nodes) + 1 - min_LB_index,
-                )
+                id = dequeue!(lower_bounds)
+                deleteat!(node_ids, findfirst(isequal(id), node_ids))
+                current_node = pop!(nodes, id)
             elseif node_selection_here == "depthfirst" # NOTE: may not work well
-                current_node = pop!(nodes)
+                id = pop!(node_ids)
+                delete!(lower_bounds, id)
+                current_node = pop!(nodes, id)
             end
             nodes_explored += 1
         else
@@ -728,7 +731,6 @@ function branchandbound_frob_matrixcomp(
             ]
                 nodes_relax_feasible += 1
                 objective_relax = relax_result["objective"]
-                lower_bounds[current_node.node_id] = objective_relax
                 Y_relax = relax_result["Y"]
                 U_relax = relax_result["U"]
                 X_relax = relax_result["X"]
@@ -740,7 +742,6 @@ function branchandbound_frob_matrixcomp(
                 # if solution for relax_result has higher objective than best found so far: prune the node
                 if objective_relax > solution["objective"]
                     nodes_relax_feasible_pruned += 1
-                    delete!(lower_bounds, current_node.node_id)
                     split_flag = false            
                 end
             end
@@ -854,7 +855,7 @@ function branchandbound_frob_matrixcomp(
             # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
             nodes_relax_feasible_split += 1
             if use_disjunctive_cuts
-                matrix_cut_child_nodes = collect(create_matrix_cut_child_nodes(
+                matrix_cut_child_nodes = create_matrix_cut_child_nodes(
                     disjunctive_cuts_type,
                     disjunctive_cuts_breakpoints,
                     Y_relax, U_relax,
@@ -864,9 +865,20 @@ function branchandbound_frob_matrixcomp(
                     current_node.depth,
                     current_node.node_id,
                     objective_relax,
-                ))
-                append!(nodes, matrix_cut_child_nodes)
-                ancestry[current_node.node_id] = [counter + i for i in 1:length(matrix_cut_child_nodes)]
+                )
+                merge!(
+                    nodes, 
+                    Dict(
+                        (counter + i) => node
+                        for (i, node) in enumerate(matrix_cut_child_nodes)
+                    )
+                )
+                new_node_ids = collect(counter+1:counter+length(matrix_cut_child_nodes))
+                append!(node_ids, new_node_ids)
+                for id in new_node_ids
+                    enqueue!(lower_bounds, id => objective_relax)
+                end
+                ancestry[current_node.node_id] = new_node_ids
                 counter += length(matrix_cut_child_nodes)
             else
                 if branching_region == "box"
@@ -946,7 +958,16 @@ function branchandbound_frob_matrixcomp(
                         depth = current_node.depth + 1,
                         parent_id = current_node.node_id,
                     )
-                    push!(nodes, left_child_node, right_child_node)
+                    merge!(
+                        nodes, 
+                        Dict(
+                            counter + 1 => left_child_node,
+                            counter + 2 => right_child_node,
+                        )
+                    )
+                    append!(node_ids, [counter + 1, counter + 2])
+                    enqueue!(lower_bounds, counter + 1 => objective_relax)
+                    enqueue!(lower_bounds, counter + 2 => objective_relax)
                     ancestry[current_node.node_id] = [counter + 1, counter + 2]
                     counter += 2
                 elseif branching_region in ["angular", "polyhedral", "hybrid"]
@@ -954,12 +975,6 @@ function branchandbound_frob_matrixcomp(
                     for j in 1:k
                         φ_relax[:,j] = U_col_to_φ_col(U_relax[:,j])
                     end
-                    # if !all(current_node.φ_lower .≤ φ_relax .≤ current_node.φ_upper)
-                    #     println(current_node.φ_lower)
-                    #     println(φ_relax)
-                    #     println(current_node.φ_upper)
-                    #     error("""""")
-                    # end
                     # finding coordinates (i, j) to branch on
                     if (
                         branching_type == "lexicographic"
@@ -1048,7 +1063,16 @@ function branchandbound_frob_matrixcomp(
                         node_id = counter + 2,
                         parent_id = current_node.node_id,
                     )
-                    push!(nodes, left_child_node, right_child_node)
+                    merge!(
+                        nodes, 
+                        Dict(
+                            counter + 1 => left_child_node,
+                            counter + 2 => right_child_node,
+                        )
+                    )
+                    append!(node_ids, [counter + 1, counter + 2])
+                    enqueue!(lower_bounds, counter + 1 => objective_relax)
+                    enqueue!(lower_bounds, counter + 2 => objective_relax)
                     ancestry[current_node.node_id] = [counter + 1, counter + 2]
                     counter += 2
                 end
@@ -1060,7 +1084,6 @@ function branchandbound_frob_matrixcomp(
             ancestry[current_node.parent_id] = setdiff(ancestry[current_node.parent_id], [current_node.node_id])
             if length(ancestry[current_node.parent_id]) == 0
                 delete!(ancestry, current_node.parent_id)
-                delete!(lower_bounds, current_node.parent_id)
             end
         end
 
@@ -1072,7 +1095,7 @@ function branchandbound_frob_matrixcomp(
             )
             last_updated_counter = counter
         else
-            minimum_lower_bounds = minimum(values(lower_bounds))
+            _, minimum_lower_bounds = peek(lower_bounds)
             if minimum_lower_bounds > lower
                 lower = minimum_lower_bounds
                 now_gap = add_update!(
