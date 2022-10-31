@@ -1591,21 +1591,21 @@ function relax_frob_matrixcomp(
         if length(matrix_cuts) > 0
             L = length(matrix_cuts)
             if disjunctive_cuts_type in ["linear", "linear2", "linear3"]
+                @expression(
+                    model,
+                    matrix_cut[l=1:L],
+                    zero(AffExpr),
+                ) # stores the RHS of the linear inequality in U and Y
                 if disjunctive_sorting
-                    @expression(
-                        model,
-                        matrix_cut[l=1:L],
-                        zero(AffExpr),
-                    ) # stores the RHS of the linear inequality in U and Y
                     @variable(model, v[1:L, 1:k]) # stores sorted version of U'x
                     v̂ = zeros(L, k) # stores (sorted) fitted Ű'x
-                    @variable(model, r[1:L, 1:k]) # dual variables
-                    @variable(model, y[1:L, 1:k, 1:k] ≥ 0) # dual variables
+                    @variable(model, r[1:L, 1:(k-1)]) # dual variables
+                    @variable(model, y[1:L, 1:(k-1), 1:k] ≥ 0) # dual variables
                     @variable(model, w[1:L, 1:k]) # stores U'x
                     @constraint(
                         model,
                         [l=1:L],
-                        sum(w[l,j] for j in 1:k) == sum(v[l,j] for j in 1:k)
+                        sum(w[l,:]) == sum(v[l,:])
                     )
                     # dual linear program of: (
                     # max sum(z[l,j] * w[l,j] for j in 1:k)
@@ -1614,21 +1614,21 @@ function relax_frob_matrixcomp(
                     # ) for each q, and for each cut l
                     @constraint(
                         model, 
-                        [l=1:L, q=1:k],
+                        [l=1:L, q=1:(k-1)],
                         sum(v[l,j] for j in 1:q) 
-                        ≥ q * r[l,q] + sum(y[l,q,j] for j in 1:k)
+                        == q * r[l,q] + sum(y[l,q,:])
                     )
                     @constraint(
                         model,
-                        [l=1:L, q=1:k, j=1:k],
+                        [l=1:L, q=1:(k-1), j=1:k],
                         w[l,j] ≤ y[l,q,j] + r[l,q]
                     )
+                    @constraint(
+                        model, 
+                        [l=1:L, i=1:(k-1)], 
+                        v[l,i] ≥ v[l,i+1]
+                    )
                 else
-                    @expression(
-                        model,
-                        matrix_cut[l=1:L],
-                        zero(AffExpr),
-                    ) # stores the RHS of the linear inequality in U and Y
                     @variable(model, v[1:L, 1:k]) # stores U'x
                     v̂ = zeros(L, k) # stores fitted Ű'x
                 end
@@ -2094,24 +2094,34 @@ function alternating_minimization(
                 if disjunctive_sorting
                     @variable(model_U, v[1:L, 1:k]) # stores sorted version of U'x
                     v̂ = zeros(L, k) # stores (sorted) fitted Ű'x
-                    @variable(model_U, r[1:L, 1:k]) # dual variables
-                    @variable(model_U, y[1:L, 1:k, 1:k] ≥ 0) # dual variables
+                    @variable(model_U, r[1:L, 1:(k-1)]) # dual variables
+                    @variable(model_U, y[1:L, 1:(k-1), 1:k] ≥ 0) # dual variables
                     @variable(model_U, w[1:L, 1:k]) # stores U'x
                     @constraint(
                         model_U,
                         [l=1:L],
-                        sum(w[l,j] for j in 1:k) == sum(v[l,j] for j in 1:k)
+                        sum(w[l,:]) == sum(v[l,:])
                     )
+                    # dual linear program of: (
+                    # max sum(z[l,j] * w[l,j] for j in 1:k)
+                    # such that sum(z[l,j] for j in 1:k) ≤ q    [r]
+                    # and z[l,j] ≤ 1 for each j                 [y]
+                    # ) for each q, and for each cut l
                     @constraint(
                         model_U, 
-                        [l=1:L, q=1:k],
+                        [l=1:L, q=1:(k-1)],
                         sum(v[l,j] for j in 1:q) 
-                        ≥ q * r[l,q] + sum(y[l,q,j] for j in 1:k)
+                        == q * r[l,q] + sum(y[l,q,:])
                     )
                     @constraint(
                         model_U,
-                        [l=1:L, q=1:k, j=1:k],
+                        [l=1:L, q=1:(k-1), j=1:k],
                         w[l,j] ≤ y[l,q,j] + r[l,q]
+                    )
+                    @constraint(
+                        model_U, 
+                        [l=1:L, i=1:(k-1)], 
+                        v[l,i] ≥ v[l,i+1]
                     )
                 else
                     @variable(model_U, v[1:L, 1:k]) # stores U'x
