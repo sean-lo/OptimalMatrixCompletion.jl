@@ -527,17 +527,42 @@ function branchandbound_frob_matrixcomp(
     end
 
     if add_Shor_valid_inequalities
-        if k == 1
-            if !noise
-                Shor_constraints_indexes = generate_rank1_basis_pursuit_Shor_constraints_indexes(indices_presolved, 1)
-            else
-                Shor_constraints_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(indices_presolved, [1, 2, 3, 4])
-            end
+        if !noise
+            # Assuming presolve is done:
+            # TODO: decide what happens when we don't implement presolve
+            Shor_constraints_indexes = generate_rank1_basis_pursuit_Shor_constraints_indexes(indices_presolved, 1)
+            Shor_non_SOC_constraints_indexes = unique(vcat(
+                [
+                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
+                    for (i1, i2, j1, j2) in Shor_constraints_indexes
+                ]...
+            ))
+            Shor_SOC_constraints_indexes = setdiff!(
+                vec(collect(Iterators.product(1:n, 1:m))), Shor_non_SOC_constraints_indexes,
+                [(x[1], x[2]) for x in findall(indices_presolved)]
+            )
         else
-            Shor_constraints_indexes = [] # TODO
+            Shor_constraints_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(
+                indices_presolved, 
+                Shor_valid_inequalities_noisy_rank1_num_entries_present
+            )
+            Shor_non_SOC_constraints_indexes = unique(vcat(
+                [
+                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
+                    for (i1, i2, j1, j2) in Shor_constraints_indexes
+                ]...
+            ))
+            Shor_SOC_constraints_indexes = setdiff!(
+                vec(collect(Iterators.product(1:n, 1:m))), Shor_non_SOC_constraints_indexes
+            )
         end
+
+        println(length(Shor_constraints_indexes))
+        println(length(Shor_SOC_constraints_indexes))
     else
         Shor_constraints_indexes = [] # TODO
+        Shor_non_SOC_constraints_indexes = [] # TODO
+        Shor_SOC_constraints_indexes = [] # TODO
     end
 
 
@@ -668,6 +693,7 @@ function branchandbound_frob_matrixcomp(
                         linear_coupling_constraints_indexes = linear_coupling_constraints_indexes,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
                         Shor_constraints_indexes = Shor_constraints_indexes,
+                        Shor_SOC_constraints_indexes = Shor_SOC_constraints_indexes,
                         matrix_cuts = current_node.matrix_cuts,
                     )
                 else
@@ -678,6 +704,7 @@ function branchandbound_frob_matrixcomp(
                         add_basis_pursuit_valid_inequalities = false,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
                         Shor_constraints_indexes = Shor_constraints_indexes,
+                        Shor_SOC_constraints_indexes = Shor_SOC_constraints_indexes,
                         matrix_cuts = current_node.matrix_cuts,
                     )
                 end
@@ -1432,6 +1459,7 @@ function relax_frob_matrixcomp(
     linear_coupling_constraints_indexes::Union{Vector, Nothing} = nothing,
     add_Shor_valid_inequalities::Bool = false, # FIXME: still unstable
     Shor_constraints_indexes::Union{Vector, Nothing} = nothing,
+    Shor_SOC_constraints_indexes::Union{Vector, Nothing} = nothing,
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
         U_lower[end,:] .= 0.0
@@ -1992,8 +2020,6 @@ function relax_frob_matrixcomp(
             MOI.OPTIMAL,
             MOI.LOCALLY_SOLVED,
         ] 
-    ]
-        ] 
         || (
             JuMP.termination_status(model) == MOI.SLOW_PROGRESS
             && has_values(model)
@@ -2040,8 +2066,6 @@ function relax_frob_matrixcomp(
             MOI.DUAL_INFEASIBLE,
             MOI.LOCALLY_INFEASIBLE,
             MOI.INFEASIBLE_OR_UNBOUNDED,
-        ] 
-    ]
         ] 
         || (
             JuMP.termination_status(model) == MOI.SLOW_PROGRESS
