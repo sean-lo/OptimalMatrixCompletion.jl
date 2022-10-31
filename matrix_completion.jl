@@ -55,6 +55,7 @@ function branchandbound_frob_matrixcomp(
     presolve::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1, 2, 3, 4],
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     use_max_steps::Bool = false,
@@ -201,10 +202,12 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("Disjunction breakpoints:                   %15s\n", disjunctive_cuts_breakpoints),
             Printf.@sprintf("Apply disjunctive sorting?:                %15s\n", disjunctive_sorting),
             (!noise ? 
-            Printf.@sprintf("(Basis pursuit) Apply presolve?:           %15s\n", presolve) : ""),
+            Printf.@sprintf("(Noiseless) Apply presolve?:               %15s\n", presolve) : ""),
             (!noise ? 
-            Printf.@sprintf("(Basis pursuit) Apply valid inequalities?: %15s\n", add_basis_pursuit_valid_inequalities) : ""),
+            Printf.@sprintf("(Noiseless) Apply valid inequalities?:     %15s\n", add_basis_pursuit_valid_inequalities) : ""),
             Printf.@sprintf("Use Shor LMI inequalities?:                %15s\n", add_Shor_valid_inequalities),
+            (noise && add_Shor_valid_inequalities ? 
+            Printf.@sprintf("(Noisy) (rank-1) Apply Shor LMI with   %15s    entries.\n", Shor_valid_inequalities_noisy_rank1_num_entries_present) : ""),
         ])
     else
         add_message!(printlist, [
@@ -319,6 +322,7 @@ function branchandbound_frob_matrixcomp(
         "presolve" => presolve,
         "add_basis_pursuit_valid_inequalities" => add_basis_pursuit_valid_inequalities,
         "add_Shor_valid_inequalities" => add_Shor_valid_inequalities,
+        "Shor_valid_inequalities_noisy_rank1_num_entries_present" => Shor_valid_inequalities_noisy_rank1_num_entries_present,
         "branching_region" => branching_region,
         "branching_type" => branching_type,
         "branch_point" => branch_point,
@@ -326,6 +330,7 @@ function branchandbound_frob_matrixcomp(
         "start_time" => start_time,
         "end_time" => start_time,
         "time_taken" => 0.0,
+        "entries_presolved" => sum(indices),
         "solve_time_altmin" => solve_time_altmin,
         "dict_solve_times_altmin" => dict_solve_times_altmin,
         "dict_num_iterations_altmin" => dict_num_iterations_altmin,
@@ -349,6 +354,7 @@ function branchandbound_frob_matrixcomp(
 
     if !noise && presolve && k == 1
         indices_presolved, X_presolved = rank1_presolve(indices, A)
+        instance["run_details"]["entries_presolved"] = sum(indices_presolved)
         X_initial = X_presolved
         U_initial = svd(X_initial).U[:,1:k]
         Y_initial = U_initial * U_initial'
@@ -1201,6 +1207,8 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("%46s: %10d\n", k, v)
         elseif startswith(k, "time") || startswith(k, "solve_time")
             Printf.@sprintf("%46s: %10.3f\n", k, v)
+        elseif startswith(k, "dict")
+            nothing
         else
             Printf.@sprintf("%46s: %s\n", k, v)
         end
@@ -1619,6 +1627,10 @@ function relax_frob_matrixcomp(
         if length(matrix_cuts) > 0
             L = length(matrix_cuts)
             if disjunctive_cuts_type in ["linear", "linear2", "linear3"]
+                all_breakpoints = [x[1] for x in matrix_cuts]
+                all_Û = [x[2] for x in matrix_cuts]
+                all_directions = [x[3] for x in matrix_cuts]
+                all_Û_x = [x[2]' * x[1] for x in matrix_cuts]
                 @expression(
                     model,
                     matrix_cut[l=1:L],
@@ -1662,7 +1674,9 @@ function relax_frob_matrixcomp(
                 end
 
                 # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
-                for (l, (breakpoint_vec, Û, _)) in enumerate(matrix_cuts)
+                for l in 1:L
+                    breakpoint_vec = all_breakpoints[l]
+                    Û = all_Û[l]
                     if disjunctive_sorting
                         @constraint(
                             model, 
@@ -1680,7 +1694,8 @@ function relax_frob_matrixcomp(
                 
                 # Constraints linking v to breakpoints
                 if disjunctive_cuts_type == "linear"   
-                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                    for l in 1:L
+                        directions = all_directions[l]
                         for j in 1:k
                             if directions[j] == "left"
                                 @constraint(model, -1 ≤ v[l,j])
@@ -1700,7 +1715,8 @@ function relax_frob_matrixcomp(
                         end
                     end
                 elseif disjunctive_cuts_type == "linear2"
-                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                    for l in 1:L
+                        directions = all_directions[l]
                         for j in 1:k
                             if directions[j] == "left"
                                 @constraint(model, -1 ≤ v[l,j])
@@ -1727,7 +1743,8 @@ function relax_frob_matrixcomp(
                         end
                     end
                 elseif disjunctive_cuts_type == "linear3"
-                    for (l, (_, _, directions)) in enumerate(matrix_cuts)
+                    for l in 1:L
+                        directions = all_directions[l]
                         for j in 1:k
                             if directions[j] == "left"
                                 @constraint(model, -1 ≤ v[l,j])
@@ -1762,7 +1779,8 @@ function relax_frob_matrixcomp(
                     end
                 end
 
-                for (l, (breakpoint_vec, _, _)) in enumerate(matrix_cuts)
+                for l in 1:L
+                    breakpoint_vec = all_breakpoints[l]
                     @constraint(
                         model,
                         matrix_cut[l] ≥ Compat.dot((breakpoint_vec * breakpoint_vec'), Y),
