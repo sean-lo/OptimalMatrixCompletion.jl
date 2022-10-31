@@ -3011,7 +3011,7 @@ function rank1_presolve(
     X_presolved = zeros(Float64, (n, m))
     X_presolved[indices] = A[indices]
 
-    for j0 in 1:n
+    for j0 in 1:m
         selected_rows = findall(indices_presolved[:,j0])
         if length(selected_rows) > 1
             rows_or = any(indices_presolved[selected_rows, :], dims=1)
@@ -3021,6 +3021,9 @@ function rank1_presolve(
                 end
                 i0 = selected_rows[findfirst(indices_presolved[selected_rows, j])]
                 for i in selected_rows
+                    if i == i0
+                        continue
+                    end
                     if !indices_presolved[i,j]
                         X_presolved[i,j] = X_presolved[i,j0] * X_presolved[i0,j] / X_presolved[i0,j0]
                         indices_presolved[i,j] = true
