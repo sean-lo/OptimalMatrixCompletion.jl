@@ -155,7 +155,7 @@ function branchandbound_frob_matrixcomp(
     end
     
     max_altmin_probability = 1.0
-    min_altmin_probability = 0.01
+    min_altmin_probability = 0.005
 
     log_time = Dates.now()
     Random.seed!(0)
