@@ -1987,10 +1987,18 @@ function relax_frob_matrixcomp(
         "termination_status" => JuMP.termination_status(model),
     )
 
-    if JuMP.termination_status(model) in [
-        MOI.OPTIMAL,
-        MOI.LOCALLY_SOLVED,
+    if (
+        JuMP.termination_status(model) in [
+            MOI.OPTIMAL,
+            MOI.LOCALLY_SOLVED,
+        ] 
     ]
+        ] 
+        || (
+            JuMP.termination_status(model) == MOI.SLOW_PROGRESS
+            && has_values(model)
+        )
+    )
         results["feasible"] = true
         results["objective"] = objective_value(model)
         results["α"] = compute_α(value.(Y), γ, A, indices)
@@ -1998,25 +2006,49 @@ function relax_frob_matrixcomp(
         results["U"] = value.(U)
         results["X"] = value.(X)
         results["Θ"] = value.(Θ)
-    elseif JuMP.termination_status(model) in [
-        MOI.INFEASIBLE,
-        MOI.DUAL_INFEASIBLE,
-        MOI.LOCALLY_INFEASIBLE,
-        MOI.INFEASIBLE_OR_UNBOUNDED,
-    ]
-        results["feasible"] = false
-    elseif JuMP.termination_status(model) == MOI.SLOW_PROGRESS
-        if has_values(model)
-            results["feasible"] = true
-            results["objective"] = objective_value(model)
-            results["α"] = compute_α(value.(Y), γ, A, indices)
-            results["Y"] = value.(Y)
-            results["U"] = value.(U)
-            results["X"] = value.(X)
-            results["Θ"] = value.(Θ)
-        else
-            results["feasible"] = false
+        if !use_disjunctive_cuts
+            results["t"] = value.(t)
         end
+        if add_Shor_valid_inequalities
+            results["W"] = value.(W)
+            results["V1"] = value.(V1)
+            results["V2"] = value.(V2)
+            results["V3"] = value.(V3)
+            if k == 1
+                nothing
+            else
+                results["Xt"] = value.(Xt)
+                results["Wt"] = value.(Wt)
+                results["H"] = value.(H)
+            end
+        end
+        if (
+            use_disjunctive_cuts 
+            && length(matrix_cuts) > 0
+            && disjunctive_cuts_type in ["linear", "linear2", "linear3"]
+        )
+            results["v"] = value.(v)
+            if disjunctive_sorting
+                results["r"] = value.(r)
+                results["y"] = value.(y)
+                results["w"] = value.(w)
+            end
+        end
+    elseif (
+        JuMP.termination_status(model) in [
+            MOI.INFEASIBLE,
+            MOI.DUAL_INFEASIBLE,
+            MOI.LOCALLY_INFEASIBLE,
+            MOI.INFEASIBLE_OR_UNBOUNDED,
+        ] 
+    ]
+        ] 
+        || (
+            JuMP.termination_status(model) == MOI.SLOW_PROGRESS
+            && !has_values(model)
+        )
+    )
+        results["feasible"] = false
     else
         error("""
         unexpected termination status: $(JuMP.termination_status(model))
