@@ -1512,24 +1512,56 @@ function relax_frob_matrixcomp(
         set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     end
 
-    @variable(model, X[1:n, 1:m])
+    if add_Shor_valid_inequalities && k > 1
+        @variable(model, Xt[1:k, 1:n, 1:m])
+        @expression(model, X[i=1:n, j=1:m], sum(Xt[:,i,j]))
+    else
+        @variable(model, X[1:n, 1:m])
+    end
     @variable(model, Y[1:n, 1:n], Symmetric)
     @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
     if !use_disjunctive_cuts
         @variable(model, t[1:n, 1:k, 1:k])
     end
-    if use_disjunctive_cuts && add_Shor_valid_inequalities
-        @variable(model, W[1:n, 1:m] ≥ 0)
+    if add_Shor_valid_inequalities
+        if k > 1
+            @variable(model, Wt[1:k, 1:n, 1:m] ≥ 0)
+            @variable(model, V1[1:k, 1:n, combinations(1:m, 2)])
+            @variable(model, V2[1:k, combinations(1:n, 2), 1:m])
+            @variable(model, V3[1:k, combinations(1:n, 2), combinations(1:m, 2)])
+            @variable(model, H[combinations(1:k, 2), 1:n, 1:m])
+            @expression(
+                model, 
+                W[i=1:n, j=1:m], 
+                sum(Wt[:,i,j]) + 2 * sum(H[:,i,j])
+            )
+        else
+            @variable(model, W[1:n, 1:m] ≥ 0)
+            @variable(model, V1[1:n, combinations(1:m, 2)])
+            @variable(model, V2[combinations(1:n, 2), 1:m])
+            @variable(model, V3[combinations(1:n, 2), combinations(1:m, 2)])
+        end
     end
 
     # If noiseless, coupling constraints between X and A
-    if use_disjunctive_cuts && !noise
-        for i in 1:n, j in 1:m
-            if indices_presolved[i,j]
-                @constraint(model, X[i,j] == A[i,j])
-                if add_Shor_valid_inequalities
-                    @constraint(model, W[i,j] == A[i,j]^2)
+    if !noise
+        if k == 1
+            for i in 1:n, j in 1:m
+                if indices_presolved[i,j]
+                    @constraint(model, X[i,j] == A[i,j])
+                    # if add_Shor_valid_inequalities
+                    #     @constraint(model, W[i,j] == A[i,j]^2) # Let's not do this
+                    # end
+                end
+            end
+        else
+            for i in 1:n, j in 1:m
+                if indices_presolved[i,j]
+                    @constraint(model, X[i,j] == A[i,j])
+                    # if add_Shor_valid_inequalities
+                    #     @constraint(model, W[i,j] == A[i,j]^2) # Let's not do this
+                    # end
                 end
             end
         end
@@ -1829,19 +1861,17 @@ function relax_frob_matrixcomp(
 
     if add_Shor_valid_inequalities
         if k == 1
-            @variable(model, V1[1:n, combinations(1:m, 2)])
-            @variable(model, V2[combinations(1:n, 2), 1:m])
-            @variable(model, V3[combinations(1:n, 2), combinations(1:m, 2)])
-            @constraint(
-                model, 
-                [i=1:n, j=1:m],
-                [0.5, W[i,j], X[i,j]] in RotatedSecondOrderCone()
-            ) # FIXME: only implement for W in which we have no information
-            @constraint(
+            for (i,j) in Shor_SOC_constraints_indexes
+                @constraint(
                     model,
-                    [j=1:m],
-                    Θ[j,j] == sum(W[i,j] for i in 1:n)
+                    [0.5, W[i,j], X[i,j]] in RotatedSecondOrderCone() 
                 )
+            end
+            @constraint(
+                model,
+                [j=1:m],
+                Θ[j,j] == sum(W[i,j] for i in 1:n)
+            )
             for j1 in 1:m, j2 in (j1+1):m    
                 @constraint(
                     model,
@@ -1860,6 +1890,50 @@ function relax_frob_matrixcomp(
                     ]) in PSDCone()
                 )
             end
+        else
+            for (i,j) in Shor_SOC_constraints_indexes
+                @constraint(
+                    model,
+                    [t=1:k],
+                    [0.5, Wt[t,i,j], Xt[t,i,j]] in RotatedSecondOrderCone() 
+                )
+            end
+            @constraint(
+                model,
+                [j=1:m],
+                Θ[j,j] == sum(W[i,j] for i in 1:n)
+            )
+            for (i1, i2, j1, j2) in Shor_constraints_indexes
+                @constraint(
+                    model, 
+                    [t=1:k],
+                    LinearAlgebra.Symmetric([
+                        1           Xt[t,i1,j1]             Xt[t,i1,j2]             Xt[t,i2,j1]             Xt[t,i2,j2];
+                        Xt[t,i1,j1]  Wt[t,i1,j1]             V1[t,i1,[j1,j2]]       V2[t,[i1,i2],j1]       V3[t,[i1,i2],[j1,j2]];
+                        Xt[t,i1,j2]  V1[t,i1,[j1,j2]]       Wt[t,i1,j2]             V3[t,[i1,i2],[j1,j2]]  V2[t,[i1,i2],j2];
+                        Xt[t,i2,j1]  V2[t,[i1,i2],j1]       V3[t,[i1,i2],[j1,j2]]  Wt[t,i2,j1]             V1[t,i2,[j1,j2]];
+                        Xt[t,i2,j2]  V3[t,[i1,i2],[j1,j2]]  V2[t,[i1,i2],j2]       V1[t,i2,[j1,j2]]       Wt[t,i2,j2];
+                    ]) in PSDCone()
+                )
+            end
+            XWH_matrix = Array{AffExpr}(undef, (n, m, k+1, k+1))
+            for i in 1:n, j in 1:m
+                XWH_matrix[i,j,1,1] = 1.0
+                for t in 1:k
+                    XWH_matrix[i,j,t+1,1] = Xt[t,i,j]
+                    XWH_matrix[i,j,1,t+1] = Xt[t,i,j]
+                    XWH_matrix[i,j,t+1,t+1] = Wt[t,i,j]
+                end
+                for (t1, t2) in combinations(1:k, 2)
+                    XWH_matrix[i,j,t1+1,t2+1] = H[[t1,t2],i,j]
+                    XWH_matrix[i,j,t2+1,t1+1] = H[[t1,t2],i,j]
+                end
+            end
+            @constraint(
+                model,
+                [i=1:n, j=1:m],
+                LinearAlgebra.Symmetric(XWH_matrix[i,j,:,:]) in PSDCone()
+            )
         end
     end
     
