@@ -23,6 +23,10 @@ function test_basis_pursuit_disjunctivecuts(
     presolve::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
+    max_update_Shor_indices_probability::Float64 = 1.0, # TODO
+    min_update_Shor_indices_probability::Float64 = 0.1, # TODO
+    update_Shor_indices_probability_decay_rate::Float64 = 1.1, # TODO
+    update_Shor_indices_n_minors::Int = 100,
     root_only::Bool = false,
     altmin_flag::Bool = true,
     use_max_steps::Bool = true,
@@ -74,6 +78,10 @@ function test_basis_pursuit_disjunctivecuts(
         presolve = presolve,
         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+        max_update_Shor_indices_probability = max_update_Shor_indices_probability,
+        min_update_Shor_indices_probability = min_update_Shor_indices_probability,
+        update_Shor_indices_probability_decay_rate = update_Shor_indices_probability_decay_rate,
+        update_Shor_indices_n_minors = update_Shor_indices_n_minors,
         root_only = root_only,
         altmin_flag = altmin_flag,
         use_max_steps = use_max_steps,

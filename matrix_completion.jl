@@ -32,6 +32,9 @@ const GRB_ENV = Gurobi.Env()
     matrix_cuts::Union{Vector{Tuple}, Nothing} = nothing
     LB::Union{Float64, Nothing} = nothing
     depth::Int
+    linear_coupling_constraints_indexes::Vector{Tuple} = []
+    Shor_constraints_indexes::Vector{Tuple} = []
+    Shor_SOC_constraints_indexes::Vector{Tuple} = []
     master_feasible::Bool = false
 end
 
@@ -57,6 +60,11 @@ function branchandbound_frob_matrixcomp(
     add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
     Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1, 2, 3, 4],
+    add_Shor_valid_inequalities_iterative::Bool = false,
+    max_update_Shor_indices_probability::Float64 = 1.0, # TODO
+    min_update_Shor_indices_probability::Float64 = 0.1, # TODO
+    update_Shor_indices_probability_decay_rate::Float64 = 1.1, # TODO
+    update_Shor_indices_n_minors::Int = 100,
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     use_max_steps::Bool = false,
@@ -154,8 +162,41 @@ function branchandbound_frob_matrixcomp(
         """)
     end
     
-    max_altmin_probability = 1.0
-    min_altmin_probability = 0.005
+    if use_disjunctive_cuts && add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative
+        if !(
+            0.0 ≤ max_update_Shor_indices_probability ≤ 1.0
+        )
+            error("""
+            Argument `max_update_Shor_indices_probability` = $max_update_Shor_indices_probability out of bounds [0.0, 1.0].
+            """)
+        end
+        if !(
+            0.0 < min_update_Shor_indices_probability < 1.0
+        )
+            error("""
+            Argument `min_update_Shor_indices_probability` = $min_update_Shor_indices_probability out of bounds (0.0, 1.0).
+            """)
+        end
+        if !(
+            1.0 < update_Shor_indices_probability_decay_rate
+        )
+            error("""
+            Argument `update_Shor_indices_probability_decay_rate` = $update_Shor_indices_probability_decay_rate out of bounds (1.0, ∞).
+            """)
+        end
+        if !(
+            1.0 ≤ update_Shor_indices_n_minors
+        )
+            error("""
+            Argument `update_Shor_indices_n_minors` = $update_Shor_indices_n_minors out of bounds [1.0, ∞).
+            """)
+        end
+    else
+        max_update_Shor_indices_probability = nothing
+        min_update_Shor_indices_probability = nothing
+        update_Shor_indices_probability_decay_rate = nothing
+        update_Shor_indices_n_minors = nothing
+    end
 
     log_time = Dates.now()
     Random.seed!(0)
@@ -208,7 +249,17 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("(Noiseless) Apply valid inequalities?:     %15s\n", add_basis_pursuit_valid_inequalities) : ""),
             Printf.@sprintf("Use Shor LMI inequalities?:                %15s\n", add_Shor_valid_inequalities),
             (noise && add_Shor_valid_inequalities ? 
-            Printf.@sprintf("(Noisy) (rank-1) Apply Shor LMI with   %15s    entries.\n", Shor_valid_inequalities_noisy_rank1_num_entries_present) : ""),
+            Printf.@sprintf("(Noisy) (rank-1) Apply Shor LMI with            %15s entries.\n", Shor_valid_inequalities_noisy_rank1_num_entries_present) : ""),
+            (add_Shor_valid_inequalities ? 
+            Printf.@sprintf("Apply Shor LMI inequalities iteratively?        %15s\n", add_Shor_valid_inequalities_iterative) : ""),
+            (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative ? 
+            Printf.@sprintf("(Iterative) Max update Shor indices prob.:      %15s\n", max_update_Shor_indices_probability) : ""),
+            (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative ? 
+            Printf.@sprintf("(Iterative) Min update Shor indices prob.:      %15s\n", min_update_Shor_indices_probability) : ""),
+            (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative ? 
+            Printf.@sprintf("(Iterative) Shor indices prob. decay rate:      %15s\n", update_Shor_indices_probability_decay_rate) : ""),
+            (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative ? 
+            Printf.@sprintf("(Iterative) update Shor indices batch size:     %15s\n", update_Shor_indices_n_minors) : ""),        
         ])
     else
         add_message!(printlist, [
@@ -323,6 +374,11 @@ function branchandbound_frob_matrixcomp(
         "presolve" => presolve,
         "add_basis_pursuit_valid_inequalities" => add_basis_pursuit_valid_inequalities,
         "add_Shor_valid_inequalities" => add_Shor_valid_inequalities,
+        "add_Shor_valid_inequalities_iterative" => add_Shor_valid_inequalities_iterative,
+        "max_update_Shor_indices_probability" => max_update_Shor_indices_probability,
+        "min_update_Shor_indices_probability" => min_update_Shor_indices_probability,
+        "update_Shor_indices_probability_decay_rate" => update_Shor_indices_probability_decay_rate,
+        "update_Shor_indices_n_minors" => update_Shor_indices_n_minors,
         "Shor_valid_inequalities_noisy_rank1_num_entries_present" => Shor_valid_inequalities_noisy_rank1_num_entries_present,
         "branching_region" => branching_region,
         "branching_type" => branching_type,
@@ -502,6 +558,71 @@ function branchandbound_frob_matrixcomp(
             )
         end
     end
+
+    if !noise
+        if add_basis_pursuit_valid_inequalities
+            if presolve
+                # compute indices for valid inequalities
+                if k == 1
+                    initial_node.linear_coupling_constraints_indexes = generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved)
+                else
+                    initial_node.linear_coupling_constraints_indexes = [] # TODO
+                end
+            else
+                initial_node.linear_coupling_constraints_indexes = [] # TODO
+            end
+        else
+            initial_node.linear_coupling_constraints_indexes = []
+        end
+    end
+
+    if (add_Shor_valid_inequalities && !add_Shor_valid_inequalities_iterative)
+        if !noise
+            # Assuming presolve is done:
+            # TODO: decide what happens when we don't implement presolve
+            initial_node.Shor_constraints_indexes = generate_rank1_basis_pursuit_Shor_constraints_indexes(indices_presolved, 1)
+            Shor_non_SOC_constraints_indexes = unique(vcat(
+                [
+                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
+                    for (i1, i2, j1, j2) in initial_node.Shor_constraints_indexes
+                ]...
+            ))
+            initial_node.Shor_SOC_constraints_indexes = setdiff(
+                vec(collect(Iterators.product(1:n, 1:m))), 
+                Shor_non_SOC_constraints_indexes,
+                [(x[1], x[2]) for x in findall(indices_presolved)]
+            )
+        else
+            initial_node.Shor_constraints_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(
+                indices_presolved, 
+                Shor_valid_inequalities_noisy_rank1_num_entries_present
+            )
+            Shor_non_SOC_constraints_indexes = unique(vcat(
+                [
+                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
+                    for (i1, i2, j1, j2) in initial_node.Shor_constraints_indexes
+                ]...
+            ))
+            initial_node.Shor_SOC_constraints_indexes = setdiff(
+                vec(collect(Iterators.product(1:n, 1:m))), 
+                Shor_non_SOC_constraints_indexes
+            )
+        end
+    elseif (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative)
+        initial_node.Shor_constraints_indexes = []
+        Shor_non_SOC_constraints_indexes = []
+        initial_node.Shor_SOC_constraints_indexes = vec(collect(Iterators.product(1:n, 1:m)))
+    elseif (!add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative)
+        error("""
+        Setting `add_Shor_valid_inequalities_iterative` to `true`
+        requires `add_Shor_valid_inequalities` to be `true`.
+        """)
+    else
+        initial_node.Shor_constraints_indexes = [] # TODO
+        Shor_non_SOC_constraints_indexes = [] # TODO
+        initial_node.Shor_SOC_constraints_indexes = [] # TODO
+    end
+
     nodes[1] = initial_node
 
     add_message!(printlist, [
@@ -515,63 +636,6 @@ function branchandbound_frob_matrixcomp(
     node_ids = [1]
     minimum_lower_bounds = Inf
     ancestry = Dict{Int, Vector{Int}}()
-
-    if !noise
-        if add_basis_pursuit_valid_inequalities
-            if presolve
-                # compute indices for valid inequalities
-                if k == 1
-                    linear_coupling_constraints_indexes = generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved)
-                else
-                    linear_coupling_constraints_indexes = [] # TODO
-                end
-            else
-                linear_coupling_constraints_indexes = [] # TODO
-            end
-        else
-            linear_coupling_constraints_indexes = []
-        end
-    end
-
-    if add_Shor_valid_inequalities
-        if !noise
-            # Assuming presolve is done:
-            # TODO: decide what happens when we don't implement presolve
-            Shor_constraints_indexes = generate_rank1_basis_pursuit_Shor_constraints_indexes(indices_presolved, 1)
-            Shor_non_SOC_constraints_indexes = unique(vcat(
-                [
-                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
-                    for (i1, i2, j1, j2) in Shor_constraints_indexes
-                ]...
-            ))
-            Shor_SOC_constraints_indexes = setdiff!(
-                vec(collect(Iterators.product(1:n, 1:m))), Shor_non_SOC_constraints_indexes,
-                [(x[1], x[2]) for x in findall(indices_presolved)]
-            )
-        else
-            Shor_constraints_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(
-                indices_presolved, 
-                Shor_valid_inequalities_noisy_rank1_num_entries_present
-            )
-            Shor_non_SOC_constraints_indexes = unique(vcat(
-                [
-                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
-                    for (i1, i2, j1, j2) in Shor_constraints_indexes
-                ]...
-            ))
-            Shor_SOC_constraints_indexes = setdiff!(
-                vec(collect(Iterators.product(1:n, 1:m))), Shor_non_SOC_constraints_indexes
-            )
-        end
-
-        println(length(Shor_constraints_indexes))
-        println(length(Shor_SOC_constraints_indexes))
-    else
-        Shor_constraints_indexes = [] # TODO
-        Shor_non_SOC_constraints_indexes = [] # TODO
-        Shor_SOC_constraints_indexes = [] # TODO
-    end
-
 
     while (
         now_gap > gap 
@@ -697,10 +761,10 @@ function branchandbound_frob_matrixcomp(
                         disjunctive_cuts_type = disjunctive_cuts_type,
                         disjunctive_sorting = disjunctive_sorting,
                         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
-                        linear_coupling_constraints_indexes = linear_coupling_constraints_indexes,
+                        linear_coupling_constraints_indexes = current_node.linear_coupling_constraints_indexes,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
-                        Shor_constraints_indexes = Shor_constraints_indexes,
-                        Shor_SOC_constraints_indexes = Shor_SOC_constraints_indexes,
+                        Shor_constraints_indexes = current_node.Shor_constraints_indexes,
+                        Shor_SOC_constraints_indexes = current_node.Shor_SOC_constraints_indexes,
                         matrix_cuts = current_node.matrix_cuts,
                     )
                 else
@@ -710,8 +774,8 @@ function branchandbound_frob_matrixcomp(
                         disjunctive_sorting = disjunctive_sorting,
                         add_basis_pursuit_valid_inequalities = false,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
-                        Shor_constraints_indexes = Shor_constraints_indexes,
-                        Shor_SOC_constraints_indexes = Shor_SOC_constraints_indexes,
+                        Shor_constraints_indexes = current_node.Shor_constraints_indexes,
+                        Shor_SOC_constraints_indexes = current_node.Shor_SOC_constraints_indexes,
                         matrix_cuts = current_node.matrix_cuts,
                     )
                 end
@@ -890,17 +954,45 @@ function branchandbound_frob_matrixcomp(
             # for now: branch on biggest element-wise difference between U_lower and U_upper / φ_lower and φ_upper
             nodes_relax_feasible_split += 1
             if use_disjunctive_cuts
-                matrix_cut_child_nodes = create_matrix_cut_child_nodes(
-                    disjunctive_cuts_type,
-                    disjunctive_cuts_breakpoints,
-                    Y_relax, U_relax,
-                    current_node.U_lower, current_node.U_upper,
-                    current_node.matrix_cuts,
-                    counter,
-                    current_node.depth,
-                    current_node.node_id,
-                    objective_relax,
-                )
+                if add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative
+                    update_Shor_indices_probability = (
+                        current_node.depth > log(
+                            update_Shor_indices_probability_decay_rate, 
+                            max_update_Shor_indices_probability / min_update_Shor_indices_probability
+                        )
+                        ?
+                        min_update_Shor_indices_probability 
+                        :
+                        max_update_Shor_indices_probability / (update_Shor_indices_probability_decay_rate ^ current_node.depth)
+                    )
+                    update_Shor_indices_flag_now = (rand() < update_Shor_indices_probability)
+                    matrix_cut_child_nodes = create_matrix_cut_child_nodes(
+                        current_node,
+                        disjunctive_cuts_type,
+                        disjunctive_cuts_breakpoints,
+                        Y_relax, 
+                        U_relax,
+                        X_relax,
+                        indices_presolved,
+                        counter,
+                        objective_relax,
+                        update_Shor_indices_flag_now,
+                        Shor_valid_inequalities_noisy_rank1_num_entries_present,
+                        update_Shor_indices_n_minors,
+                    )
+                else
+                    matrix_cut_child_nodes = create_matrix_cut_child_nodes(
+                        current_node,
+                        disjunctive_cuts_type,
+                        disjunctive_cuts_breakpoints,
+                        Y_relax, 
+                        U_relax,
+                        X_relax,
+                        indices_presolved,
+                        counter,
+                        objective_relax,
+                    )
+                end
                 merge!(
                     nodes, 
                     Dict(
@@ -2895,17 +2987,18 @@ function compute_jacobian(
 end
 
 function create_matrix_cut_child_nodes(
+    node::BBNode,
     disjunctive_cuts_type::String,
     disjunctive_cuts_breakpoints::String,
     Y::Matrix{Float64},
     U::Matrix{Float64},
-    U_lower::Matrix{Float64},
-    U_upper::Matrix{Float64},
-    matrix_cuts::Vector{Tuple},
+    X::Matrix{Float64},
+    indices::BitMatrix,
     counter::Int,
-    depth::Int,
-    node_id::Int,
     objective_relax::Float64,
+    update_Shor_indices_flag::Bool = false,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [4],
+    n_minors::Int = 100,
 )
     # matrix_cuts is a vector of tuples: each containing:
     # 1. breakpoint_vec: (n,) vector which is negative w.r.t. U U' - Y
@@ -2933,18 +3026,19 @@ function create_matrix_cut_child_nodes(
         """)
     end
     if !(
-        size(U) == size(U_lower) == size(U_upper)
-        && size(Y, 1) == size(U, 1)
+        size(U) == size(node.U_lower) == size(node.U_upper)
+        && size(Y, 1) == size(U, 1) == size(X, 1)
     )
         error("""
         Dimension mismatch.
         Input matrix Y must have size (n, n); $(size(Y)) instead.
         Input matrix U must have size (n, k); $(size(U)) instead.
-        Input matrix U_lower must have size (n, k); $(size(U_lower)) instead.
-        Input matrix U_upper must have size (n, k); $(size(U_upper)) instead.
+        Input matrix U_lower must have size (n, k); $(size(node.U_lower)) instead.
+        Input matrix U_upper must have size (n, k); $(size(node.U_upper)) instead.
         """)
     end
     (n, k) = size(U)
+    (n, m) = size(X)
     
     if disjunctive_cuts_breakpoints == "smallest_1_eigvec"
         eigvals, eigvecs, _ = eigs(U * U' - Y, nev=1, which=:SR, tol=1e-6)
@@ -2973,29 +3067,60 @@ function create_matrix_cut_child_nodes(
                 Iterators.product(repeat([["left", "inner_left", "inner_right", "right"]], k)...)
             )
         end
+        if update_Shor_indices_flag
+            minors = generate_violated_Shor_minors(
+                reshape(X, (1, n, m)), 
+                indices,
+                Shor_valid_inequalities_noisy_rank1_num_entries_present,
+                node.Shor_constraints_indexes,
+                n_minors,
+            )
+            Shor_constraints_indexes = union(
+                node.Shor_constraints_indexes,
+                [
+                    m[2] for m in minors
+                ]
+            )
+            Shor_non_SOC_constraints_indexes = unique(vcat(
+                [
+                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
+                    for (i1, i2, j1, j2) in Shor_constraints_indexes
+                ]...
+            ))
+            Shor_SOC_constraints_indexes = setdiff(
+                node.Shor_SOC_constraints_indexes, 
+                Shor_non_SOC_constraints_indexes
+            )
+        else
+            Shor_constraints_indexes = node.Shor_constraints_indexes
+            Shor_SOC_constraints_indexes = node.Shor_SOC_constraints_indexes
+        end
         return (
             BBNode(
-                U_lower = U_lower,
-                U_upper = U_upper,
-                matrix_cuts = vcat(matrix_cuts, [(breakpoint_vec, U, directions)]),
+                U_lower = node.U_lower,
+                U_upper = node.U_upper,
+                matrix_cuts = vcat(node.matrix_cuts, [(breakpoint_vec, U, directions)]),
                 # initialize a node's LB with the objective of relaxation of parent
                 LB = objective_relax,
-                depth = depth + 1,
+                depth = node.depth + 1,
                 node_id = counter + ind,
-                parent_id = node_id,
+                parent_id = node.node_id,
+                linear_coupling_constraints_indexes = node.linear_coupling_constraints_indexes,
+                Shor_constraints_indexes = Shor_constraints_indexes,
+                Shor_SOC_constraints_indexes = Shor_SOC_constraints_indexes,
             )
             for (ind, directions) in directions_list
         )
     elseif disjunctive_cuts_type in ["linear_all"]
         return (
             BBNode(
-                U_lower = U_lower,
-                U_upper = U_upper,
-                matrix_cuts = vcat(matrix_cuts, [(breakpoint_vec, U, diagm(collect(s)))]),
+                U_lower = node.U_lower,
+                U_upper = node.U_upper,
+                matrix_cuts = vcat(node.matrix_cuts, [(breakpoint_vec, U, diagm(collect(s)))]),
                 LB = objective_relax,
-                depth = depth + 1,
+                depth = node.depth + 1,
                 node_id = counter + ind, 
-                parent_id = node_id,
+                parent_id = node.node_id,
             )
             for (ind, s) in enumerate(Iterators.product(repeat([[1,-1]], k)...))
         )
@@ -3236,4 +3361,37 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
     end
 
     return Shor_constraints_indexes
+end
+
+function generate_violated_Shor_minors(
+    X::Array{Float64, 3},
+    indices::BitMatrix,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int},
+    Shor_constraints_indexes::Vector{Tuple},
+    n_minors::Int,
+)
+    (k, n, m) = size(X)
+
+    # minors_indexes = vec(collect(
+    #     (i1, i2, j1, j2)
+    #     for (i1, i2) in combinations(1:n, 2), 
+    #         (j1, j2) in combinations(1:m, 2)
+    # ))
+    minors_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(
+        indices, Shor_valid_inequalities_noisy_rank1_num_entries_present,
+    )
+    setdiff!(minors_indexes, Shor_constraints_indexes)
+    minors = vec(collect(
+        (
+            sum(abs.(X[:,i1,j1] .* X[:,i2,j2] .- X[:,i1,j2] .* X[:,i2,j1])),
+            (i1, i2, j1, j2)
+        )
+        for (i1, i2, j1, j2) in minors_indexes
+    ))
+    if length(minors) < n_minors
+        return sort(minors, rev = true)
+    else
+        partialsort!(minors, 1:n_minors, rev=true)
+        return minors[1:n_minors]
+    end
 end

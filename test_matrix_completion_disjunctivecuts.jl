@@ -22,6 +22,12 @@ function test_matrix_completion_disjunctivecuts(
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing,
     disjunctive_sorting::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
+    add_Shor_valid_inequalities_iterative::Bool = false,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1,2,3,4],
+    max_update_Shor_indices_probability::Float64 = 1.0, # TODO
+    min_update_Shor_indices_probability::Float64 = 0.1, # TODO
+    update_Shor_indices_probability_decay_rate::Float64 = 1.1, # TODO
+    update_Shor_indices_n_minors::Int = 100,
     root_only::Bool = false,
     altmin_flag::Bool = true,
     use_max_steps::Bool = true,
@@ -72,6 +78,12 @@ function test_matrix_completion_disjunctivecuts(
         disjunctive_sorting = disjunctive_sorting,
         presolve = false, # does not apply in noisy case
         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+        add_Shor_valid_inequalities_iterative = add_Shor_valid_inequalities_iterative,
+        Shor_valid_inequalities_noisy_rank1_num_entries_present = Shor_valid_inequalities_noisy_rank1_num_entries_present,
+        max_update_Shor_indices_probability = max_update_Shor_indices_probability,
+        min_update_Shor_indices_probability = min_update_Shor_indices_probability,
+        update_Shor_indices_probability_decay_rate = update_Shor_indices_probability_decay_rate,
+        update_Shor_indices_n_minors = update_Shor_indices_n_minors,
         root_only = root_only,
         altmin_flag = altmin_flag,
         use_max_steps = use_max_steps,
