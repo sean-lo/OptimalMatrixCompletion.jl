@@ -1,10 +1,9 @@
+module TestMatrixCompletionDisjunctiveCuts
+
 include("matrix_completion.jl")
 include("utils.jl")
 
-using Plots
-using StatsBase
-using Suppressor
-using CSV
+export test_matrix_completion_disjunctivecuts
 
 function test_matrix_completion_disjunctivecuts(
     k::Int,
@@ -89,6 +88,9 @@ function test_matrix_completion_disjunctivecuts(
         update_Shor_indices_n_minors = update_Shor_indices_n_minors,
         root_only = root_only,
         altmin_flag = altmin_flag,
+        max_altmin_probability = max_altmin_probability,
+        min_altmin_probability = min_altmin_probability,
+        altmin_probability_decay_rate = altmin_probability_decay_rate,
         use_max_steps = use_max_steps,
         max_steps = max_steps,
         time_limit = time_limit,
@@ -108,6 +110,19 @@ function test_matrix_completion_disjunctivecuts(
 
     return r
 end
+
+end
+
+include("matrix_completion.jl")
+include("utils.jl")
+
+using .TestMatrixCompletionDisjunctiveCuts
+using Plots
+using StatsBase
+using Suppressor
+using CSV
+using JLD
+
 
 # Experiment 1: number of eigenvectors
 r_1_1 = test_matrix_completion_disjunctivecuts(

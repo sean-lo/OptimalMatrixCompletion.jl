@@ -1,10 +1,9 @@
+module TestBasisPursuitDisjunctiveCuts
+
 include("matrix_completion.jl")
 include("utils.jl")
 
-using Plots
-using StatsBase
-using Suppressor
-using CSV
+export test_basis_pursuit_disjunctivecuts
 
 function test_basis_pursuit_disjunctivecuts(
     k::Int,
@@ -35,26 +34,6 @@ function test_basis_pursuit_disjunctivecuts(
     update_step::Int = 1000,
     with_log::Bool = true,
 )
-    if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
-        error("""
-        Invalid input for disjunctive cuts type.
-        Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
-        $disjunctive_cuts_type supplied instead.
-        """)
-    end
-    if !(disjunctive_cuts_breakpoints in ["smallest_1_eigvec", "smallest_2_eigvec"])
-        error("""
-        Invalid input for disjunctive cuts breakpoints.
-        Disjunctive cuts type must be either "smallest_1_eigvec" or "smallest_2_eigvec";
-        $disjunctive_cuts_breakpoints supplied instead.
-        """)
-    end
-    if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst", "bestfirst_depthfirst"])
-        error("""
-        Invalid input for node selection.
-        Node selection must be either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst"; $node_selection supplied instead.
-        """)
-    end
     (A, indices) = generate_matrixcomp_data(
         k, m, n, n_indices, seed; 
         noise = false, ϵ = 0.0,
@@ -102,6 +81,18 @@ function test_basis_pursuit_disjunctivecuts(
 
     return solution, printlist, instance
 end
+
+end
+
+include("matrix_completion.jl")
+include("utils.jl")
+
+using .TestBasisPursuitDisjunctiveCuts
+using Plots
+using StatsBase
+using Suppressor
+using CSV
+using JLD
 
 # Presolve is required
 test_basis_pursuit_disjunctivecuts(
