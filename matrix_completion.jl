@@ -67,6 +67,9 @@ function branchandbound_frob_matrixcomp(
     update_Shor_indices_n_minors::Int = 100,
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
+    max_altmin_probability::Float64 = 1.0,
+    min_altmin_probability::Float64 = 0.005,
+    altmin_probability_decay_rate::Float64 = 1.1,
     use_max_steps::Bool = false,
     max_steps::Int = 1000000,
     time_limit::Int = 3600, # time limit in seconds
@@ -162,6 +165,34 @@ function branchandbound_frob_matrixcomp(
         """)
     end
     
+    if noise && altmin_flag
+        if !(
+            0.0 ≤ max_altmin_probability ≤ 1.0
+        )
+            error("""
+            Argument `max_altmin_probability` = $max_altmin_probability out of bounds [0.0, 1.0].
+            """)
+        end
+        if !(
+            0.0 < min_altmin_probability < 1.0
+        )
+            error("""
+            Argument `min_altmin_probability` = $min_altmin_probability out of bounds (0.0, 1.0).
+            """)
+        end
+        if !(
+            1.0 < altmin_probability_decay_rate
+        )
+            error("""
+            Argument `altmin_probability_decay_rate` = $altmin_probability_decay_rate out of bounds (1.0, ∞).
+            """)
+        end
+    else
+        max_altmin_probability = nothing
+        min_altmin_probability = nothing
+        altmin_probability_decay_rate = nothing
+    end
+    
     if use_disjunctive_cuts && add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative
         if !(
             0.0 ≤ max_update_Shor_indices_probability ≤ 1.0
@@ -210,44 +241,44 @@ function branchandbound_frob_matrixcomp(
         (noise ? 
         "Starting branch-and-bound on a (noisy) matrix completion problem.\n" :
         "Starting branch-and-bound on a (noiseless) basis pursuit problem.\n"),
-        Printf.@sprintf("k:                                         %15d\n", k),
-        Printf.@sprintf("m:                                         %15d\n", m),
-        Printf.@sprintf("n:                                         %15d\n", n),
-        Printf.@sprintf("num_indices:                               %15d\n", sum(indices)),
-        (
-            noise 
-            ? Printf.@sprintf("(Noisy) γ:                                 %15g\n", γ) : ""
-        ),
-        Printf.@sprintf("λ:                                         %15g\n", λ),
+        Printf.@sprintf("k:                                              %15d\n", k),
+        Printf.@sprintf("m:                                              %15d\n", m),
+        Printf.@sprintf("n:                                              %15d\n", n),
+        Printf.@sprintf("num_indices:                                    %15d\n", sum(indices)),
+        (noise ? 
+        Printf.@sprintf("(Noisy) γ:                                      %15g\n", γ) : ""),
+        Printf.@sprintf("λ:                                              %15g\n", λ),
         "\n",
-        Printf.@sprintf("Node selection:                            %15s\n", node_selection),
+        Printf.@sprintf("Node selection:                                 %15s\n", node_selection),
         (node_selection == "bestfirst_depthfirst" ?
-        Printf.@sprintf("Bestfirst-depthfirst cutoff:               %15s\n", bestfirst_depthfirst_cutoff) : ""),
-        Printf.@sprintf("Optimality gap:                            %15g\n", gap),
-        Printf.@sprintf("Only solve root node?:                     %15s\n", root_only),
+        Printf.@sprintf("Bestfirst-depthfirst cutoff:                    %15s\n", bestfirst_depthfirst_cutoff) : ""),
+        Printf.@sprintf("Optimality gap:                                 %15g\n", gap),
+        Printf.@sprintf("Only solve root node?:                          %15s\n", root_only),
         (!root_only && noise ?
-        Printf.@sprintf("(Noisy) Do altmin at child nodes?:         %15s\n", altmin_flag) : ""),
+        Printf.@sprintf("(Noisy) Do altmin at child nodes?:              %15s\n", altmin_flag) : ""),
         (!root_only && noise && altmin_flag ? 
-        Printf.@sprintf("(Noisy) Max altmin probability:            %15s\n", max_altmin_probability) : ""),
+        Printf.@sprintf("(Noisy) Max altmin probability:                 %15s\n", max_altmin_probability) : ""),
         (!root_only && noise && altmin_flag ? 
-        Printf.@sprintf("(Noisy) Min altmin probability:            %15s\n", min_altmin_probability) : ""),
-        Printf.@sprintf("Cap on nodes?                              %15s\n", use_max_steps),
+        Printf.@sprintf("(Noisy) Min altmin probability:                 %15s\n", min_altmin_probability) : ""),
+        (!root_only && noise && altmin_flag ? 
+        Printf.@sprintf("(Noisy) Altmin probability decay rate:          %15s\n", altmin_probability_decay_rate) : ""),
+        Printf.@sprintf("Cap on nodes?                                   %15s\n", use_max_steps),
         (use_max_steps ?
-        Printf.@sprintf("Maximum nodes:                             %15d\n", max_steps) : ""),
-        Printf.@sprintf("Time limit (s):                            %15d\n", time_limit),
+        Printf.@sprintf("Maximum nodes:                                  %15d\n", max_steps) : ""),
+        Printf.@sprintf("Time limit (s):                                 %15d\n", time_limit),
         "\n",
     ])
     if use_disjunctive_cuts
         add_message!(printlist, [
-            Printf.@sprintf("Use disjunctive cuts?:                     %15s\n", use_disjunctive_cuts),
-            Printf.@sprintf("Disjunctive cuts type:                     %15s\n", disjunctive_cuts_type),
-            Printf.@sprintf("Disjunction breakpoints:                   %15s\n", disjunctive_cuts_breakpoints),
-            Printf.@sprintf("Apply disjunctive sorting?:                %15s\n", disjunctive_sorting),
+            Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
+            Printf.@sprintf("Disjunctive cuts type:                          %15s\n", disjunctive_cuts_type),
+            Printf.@sprintf("Disjunction breakpoints:                        %15s\n", disjunctive_cuts_breakpoints),
+            Printf.@sprintf("Apply disjunctive sorting?:                     %15s\n", disjunctive_sorting),
             (!noise ? 
-            Printf.@sprintf("(Noiseless) Apply presolve?:               %15s\n", presolve) : ""),
+            Printf.@sprintf("(Noiseless) Apply presolve?:                    %15s\n", presolve) : ""),
             (!noise ? 
-            Printf.@sprintf("(Noiseless) Apply valid inequalities?:     %15s\n", add_basis_pursuit_valid_inequalities) : ""),
-            Printf.@sprintf("Use Shor LMI inequalities?:                %15s\n", add_Shor_valid_inequalities),
+            Printf.@sprintf("(Noiseless) Apply valid inequalities?:          %15s\n", add_basis_pursuit_valid_inequalities) : ""),
+            Printf.@sprintf("Use Shor LMI inequalities?:                     %15s\n", add_Shor_valid_inequalities),
             (noise && add_Shor_valid_inequalities ? 
             Printf.@sprintf("(Noisy) (rank-1) Apply Shor LMI with            %15s entries.\n", Shor_valid_inequalities_noisy_rank1_num_entries_present) : ""),
             (add_Shor_valid_inequalities ? 
@@ -364,6 +395,7 @@ function branchandbound_frob_matrixcomp(
         "altmin_flag" => altmin_flag,
         "max_altmin_probability" => max_altmin_probability,
         "min_altmin_probability" => min_altmin_probability,
+        "altmin_probability_decay_rate" => altmin_probability_decay_rate,
         "use_max_steps" => use_max_steps,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
@@ -871,18 +903,21 @@ function branchandbound_frob_matrixcomp(
         end
 
         # perform alternating minimization heuristic
-        altmin_probability = (
-            current_node.depth > log2(max_altmin_probability / min_altmin_probability)
-            ?
-            min_altmin_probability 
-            :
-            max_altmin_probability / (2 ^ current_node.depth)
-        )
-        altmin_flag_now = (
-            altmin_flag 
-            && noise # only perform alternating minimization in the noisy setting
-            && (rand() < altmin_probability)
-        )
+        if altmin_flag && noise # only perform alternating minimization in the noisy setting
+            altmin_probability = (
+                current_node.depth > log(
+                    altmin_probability_decay_rate, 
+                    max_altmin_probability / min_altmin_probability
+                )
+                ?
+                min_altmin_probability 
+                :
+                max_altmin_probability / (altmin_probability_decay_rate ^ current_node.depth)
+            )
+            altmin_flag_now = (rand() < altmin_probability)
+        else
+            altmin_flag_now = false
+        end
         if split_flag
             if altmin_flag_now
                 U_rounded = svd(relax_result["Y"]).U[:,1:k] # NOTE: need not be in disjunctive regions for $U$
