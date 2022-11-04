@@ -1690,22 +1690,59 @@ function relax_frob_matrixcomp(
         @variable(model, t[1:n, 1:k, 1:k])
     end
     if add_Shor_valid_inequalities
+        @variable(model, W[1:n, 1:m] ≥ 0)
         if k > 1
-            @variable(model, Wt[1:k, 1:n, 1:m] ≥ 0)
-            @variable(model, V1[1:k, 1:n, combinations(1:m, 2)])
-            @variable(model, V2[1:k, combinations(1:n, 2), 1:m])
-            @variable(model, V3[1:k, combinations(1:n, 2), combinations(1:m, 2)])
-            @variable(model, H[combinations(1:k, 2), 1:n, 1:m])
-            @expression(
+            Shor_constraints_coords = unique(vcat(
+                [
+                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
+                    for (i1, i2, j1, j2) in Shor_constraints_indexes
+                ]...
+            ))
+            Shor_constraints_coords_i = sort(unique([x[1] for x in Shor_constraints_coords]))
+            Shor_constraints_coords_j = sort(unique([x[2] for x in Shor_constraints_coords]))
+            @variable(model, Wt[
+                1:k, 
+                Shor_constraints_coords
+            ] ≥ 0)
+            @variable(model, V1[
+                1:k, 
+                Shor_constraints_coords_i, 
+                [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
+            ])
+            @variable(model, V2[
+                1:k, 
+                [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
+                Shor_constraints_coords_j
+            ])
+            @variable(model, V3[
+                1:k, 
+                [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
+                [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
+            ])
+            @variable(model, H[
+                [tuple(x...) for x in combinations(1:k, 2)], 
+                Shor_constraints_coords
+            ])
+            # Infiltrator.toggle_async_check(false)
+            # @infiltrate
+            @constraint(
                 model, 
-                W[i=1:n, j=1:m], 
-                sum(Wt[:,i,j]) + 2 * sum(H[:,i,j])
+                [(i,j) in Shor_constraints_coords], 
+                W[i,j] == sum(Wt[:,(i,j)]) + 2 * sum(H[:,(i,j)])
             )
         else
-            @variable(model, W[1:n, 1:m] ≥ 0)
-            @variable(model, V1[1:n, combinations(1:m, 2)])
-            @variable(model, V2[combinations(1:n, 2), 1:m])
-            @variable(model, V3[combinations(1:n, 2), combinations(1:m, 2)])
+            @variable(model, V1[
+                1:n, 
+                [tuple(x...) for x in combinations(1:m, 2)]
+            ])
+            @variable(model, V2[
+                [tuple(x...) for x in combinations(1:n, 2)], 
+                1:m
+            ])
+            @variable(model, V3[
+                [tuple(x...) for x in combinations(1:n, 2)], 
+                [tuple(x...) for x in combinations(1:m, 2)]
+            ])
         end
     end
 
@@ -1715,18 +1752,12 @@ function relax_frob_matrixcomp(
             for i in 1:n, j in 1:m
                 if indices_presolved[i,j]
                     @constraint(model, X[i,j] == A[i,j])
-                    # if add_Shor_valid_inequalities
-                    #     @constraint(model, W[i,j] == A[i,j]^2) # Let's not do this
-                    # end
                 end
             end
         else
             for i in 1:n, j in 1:m
                 if indices_presolved[i,j]
                     @constraint(model, X[i,j] == A[i,j])
-                    # if add_Shor_valid_inequalities
-                    #     @constraint(model, W[i,j] == A[i,j]^2) # Let's not do this
-                    # end
                 end
             end
         end
@@ -1765,7 +1796,7 @@ function relax_frob_matrixcomp(
                     matrix_cut[l=1:L],
                     zero(AffExpr),
                 ) # stores the RHS of the linear inequality in U and Y
-                if disjunctive_sorting
+                if (disjunctive_sorting && k > 1)
                     @variable(model, v[1:L, 1:k]) # stores sorted version of U'x
                     v̂ = zeros(L, k) # stores (sorted) fitted Ű'x
                     @variable(model, r[1:L, 1:(k-1)]) # dual variables
@@ -1806,7 +1837,7 @@ function relax_frob_matrixcomp(
                 for l in 1:L
                     breakpoint_vec = all_breakpoints[l]
                     Û = all_Û[l]
-                    if disjunctive_sorting
+                    if (disjunctive_sorting && k > 1)
                         @constraint(
                             model, 
                             w[l,:] .== U' * breakpoint_vec,
@@ -2050,7 +2081,7 @@ function relax_frob_matrixcomp(
             for j1 in 1:m, j2 in (j1+1):m    
                 @constraint(
                     model,
-                    Θ[j1,j2] == sum(V1[i,[j1,j2]] for i in 1:n)
+                    Θ[j1,j2] == sum(V1[i,(j1,j2)] for i in 1:n)
                 )
             end
             for (i1, i2, j1, j2) in Shor_constraints_indexes
@@ -2058,10 +2089,10 @@ function relax_frob_matrixcomp(
                     model, 
                     LinearAlgebra.Symmetric([
                         1           X[i1,j1]            X[i1,j2]            X[i2,j1]            X[i2,j2];
-                        X[i1,j1]    W[i1,j1]            V1[i1,[j1,j2]]      V2[[i1,i2],j1]      V3[[i1,i2],[j1,j2]];
-                        X[i1,j2]    V1[i1,[j1,j2]]      W[i1,j2]            V3[[i1,i2],[j1,j2]] V2[[i1,i2],j2];
-                        X[i2,j1]    V2[[i1,i2],j1]      V3[[i1,i2],[j1,j2]] W[i2,j1]            V1[i2,[j1,j2]];
-                        X[i2,j2]    V3[[i1,i2],[j1,j2]] V2[[i1,i2],j2]      V1[i2,[j1,j2]]      W[i2,j2];
+                        X[i1,j1]    W[i1,j1]            V1[i1,(j1,j2)]      V2[(i1,i2),j1]      V3[(i1,i2),(j1,j2)];
+                        X[i1,j2]    V1[i1,(j1,j2)]      W[i1,j2]            V3[(i1,i2),(j1,j2)] V2[(i1,i2),j2];
+                        X[i2,j1]    V2[(i1,i2),j1]      V3[(i1,i2),(j1,j2)] W[i2,j1]            V1[i2,(j1,j2)];
+                        X[i2,j2]    V3[(i1,i2),(j1,j2)] V2[(i1,i2),j2]      V1[i2,(j1,j2)]      W[i2,j2];
                     ]) in PSDCone()
                 )
             end
@@ -2069,8 +2100,7 @@ function relax_frob_matrixcomp(
             for (i,j) in Shor_SOC_constraints_indexes
                 @constraint(
                     model,
-                    [t=1:k],
-                    [0.5, Wt[t,i,j], Xt[t,i,j]] in RotatedSecondOrderCone() 
+                    [0.5, W[i,j], sum(Xt[:,i,j])] in RotatedSecondOrderCone() 
                 )
             end
             @constraint(
@@ -2083,32 +2113,31 @@ function relax_frob_matrixcomp(
                     model, 
                     [t=1:k],
                     LinearAlgebra.Symmetric([
-                        1           Xt[t,i1,j1]             Xt[t,i1,j2]             Xt[t,i2,j1]             Xt[t,i2,j2];
-                        Xt[t,i1,j1]  Wt[t,i1,j1]             V1[t,i1,[j1,j2]]       V2[t,[i1,i2],j1]       V3[t,[i1,i2],[j1,j2]];
-                        Xt[t,i1,j2]  V1[t,i1,[j1,j2]]       Wt[t,i1,j2]             V3[t,[i1,i2],[j1,j2]]  V2[t,[i1,i2],j2];
-                        Xt[t,i2,j1]  V2[t,[i1,i2],j1]       V3[t,[i1,i2],[j1,j2]]  Wt[t,i2,j1]             V1[t,i2,[j1,j2]];
-                        Xt[t,i2,j2]  V3[t,[i1,i2],[j1,j2]]  V2[t,[i1,i2],j2]       V1[t,i2,[j1,j2]]       Wt[t,i2,j2];
+                        1            Xt[t,i1,j1]            Xt[t,i1,j2]            Xt[t,i2,j1]            Xt[t,i2,j2];
+                        Xt[t,i1,j1]  Wt[t,(i1,j1)]          V1[t,i1,(j1,j2)]       V2[t,(i1,i2),j1]       V3[t,(i1,i2),(j1,j2)];
+                        Xt[t,i1,j2]  V1[t,i1,(j1,j2)]       Wt[t,(i1,j2)]          V3[t,(i1,i2),(j1,j2)]  V2[t,(i1,i2),j2];
+                        Xt[t,i2,j1]  V2[t,(i1,i2),j1]       V3[t,(i1,i2),(j1,j2)]  Wt[t,(i2,j1)]          V1[t,i2,(j1,j2)];
+                        Xt[t,i2,j2]  V3[t,(i1,i2),(j1,j2)]  V2[t,(i1,i2),j2]       V1[t,i2,(j1,j2)]       Wt[t,(i2,j2)];
                     ]) in PSDCone()
                 )
             end
             XWH_matrix = Array{AffExpr}(undef, (n, m, k+1, k+1))
-            for i in 1:n, j in 1:m
+            for (i,j) in Shor_constraints_coords
                 XWH_matrix[i,j,1,1] = 1.0
                 for t in 1:k
                     XWH_matrix[i,j,t+1,1] = Xt[t,i,j]
                     XWH_matrix[i,j,1,t+1] = Xt[t,i,j]
-                    XWH_matrix[i,j,t+1,t+1] = Wt[t,i,j]
+                    XWH_matrix[i,j,t+1,t+1] = Wt[t,(i,j)]
                 end
                 for (t1, t2) in combinations(1:k, 2)
-                    XWH_matrix[i,j,t1+1,t2+1] = H[[t1,t2],i,j]
-                    XWH_matrix[i,j,t2+1,t1+1] = H[[t1,t2],i,j]
+                    XWH_matrix[i,j,t1+1,t2+1] = H[(t1,t2),(i,j)]
+                    XWH_matrix[i,j,t2+1,t1+1] = H[(t1,t2),(i,j)]
                 end
+                @constraint(
+                    model,
+                    LinearAlgebra.Symmetric(XWH_matrix[i,j,:,:]) in PSDCone()
+                )
             end
-            @constraint(
-                model,
-                [i=1:n, j=1:m],
-                LinearAlgebra.Symmetric(XWH_matrix[i,j,:,:]) in PSDCone()
-            )
         end
     end
     
@@ -2201,7 +2230,7 @@ function relax_frob_matrixcomp(
             && disjunctive_cuts_type in ["linear", "linear2", "linear3"]
         )
             results["v"] = value.(v)
-            if disjunctive_sorting
+            if (disjunctive_sorting && k > 1)
                 results["r"] = value.(r)
                 results["y"] = value.(y)
                 results["w"] = value.(w)
@@ -2295,7 +2324,7 @@ function alternating_minimization(
         if length(matrix_cuts) > 0
             L = length(matrix_cuts)
             if disjunctive_cuts_type in ["linear", "linear2", "linear3"]
-                if disjunctive_sorting
+                if (disjunctive_sorting && k > 1)
                     @variable(model_U, v[1:L, 1:k]) # stores sorted version of U'x
                     v̂ = zeros(L, k) # stores (sorted) fitted Ű'x
                     @variable(model_U, r[1:L, 1:(k-1)]) # dual variables
@@ -2334,7 +2363,7 @@ function alternating_minimization(
 
                 # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
                 for (l, (breakpoint_vec, Û, _)) in enumerate(matrix_cuts)
-                    if disjunctive_sorting
+                    if (disjunctive_sorting && k > 1)
                         @constraint(
                             model_U, 
                             w[l,:] .== U' * breakpoint_vec,
