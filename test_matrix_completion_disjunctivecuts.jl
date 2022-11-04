@@ -15,10 +15,10 @@ function test_matrix_completion_disjunctivecuts(
     γ::Float64,
     ;
     λ::Float64 = 0.0,
-    node_selection::String = "breadthfirst",
+    node_selection::String = "bestfirst",
     bestfirst_depthfirst_cutoff::Int = 10000,
-    disjunctive_cuts_type::Union{String, Nothing} = nothing,
-    disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing,
+    disjunctive_cuts_type::Union{String, Nothing} = "linear",
+    disjunctive_cuts_breakpoints::Union{String, Nothing} = "smallest_1_eigvec",
     disjunctive_sorting::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities_iterative::Bool = false,
@@ -38,26 +38,6 @@ function test_matrix_completion_disjunctivecuts(
     update_step::Int = 1000,
     with_log::Bool = true,
 )
-    if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
-        error("""
-        Invalid input for disjunctive cuts type.
-        Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
-        $disjunctive_cuts_type supplied instead.
-        """)
-    end
-    if !(disjunctive_cuts_breakpoints in ["smallest_1_eigvec", "smallest_2_eigvec"])
-        error("""
-        Invalid input for disjunctive cuts breakpoints.
-        Disjunctive cuts type must be either "smallest_1_eigvec" or "smallest_2_eigvec";
-        $disjunctive_cuts_breakpoints supplied instead.
-        """)
-    end
-    if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst", "bestfirst_depthfirst"])
-        error("""
-        Invalid input for node selection.
-        Node selection must be either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst"; $node_selection supplied instead.
-        """)
-    end
     (A, indices) = generate_matrixcomp_data(
         k, m, n, n_indices, seed; 
         noise = true, ϵ = ϵ,
