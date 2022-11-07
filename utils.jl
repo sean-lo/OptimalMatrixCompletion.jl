@@ -60,7 +60,7 @@ function generate_masked_bitmatrix(
     Random.seed!(seed)
     while true
         index_pairs = randperm(dim1 * dim2)[1:sparsity]
-        index_vec = zeros(Bool, dim1 * dim2)
+        index_vec = falses(dim1 * dim2)
         index_vec[index_pairs] .= true
         indices = reshape(index_vec, (dim1, dim2))
         if (
