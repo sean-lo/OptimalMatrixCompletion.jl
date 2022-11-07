@@ -1,7 +1,6 @@
 using LinearAlgebra
 using Arpack
 using Random
-using Compat
 
 using Printf
 using Dates
@@ -1943,7 +1942,7 @@ function relax_frob_matrixcomp(
                     breakpoint_vec = all_breakpoints[l]
                     @constraint(
                         model,
-                        matrix_cut[l] ≥ Compat.dot((breakpoint_vec * breakpoint_vec'), Y),
+                        matrix_cut[l] ≥ LinearAlgebra.dot(breakpoint_vec, Y, breakpoint_vec),
                     )
                 end
 
@@ -1963,8 +1962,8 @@ function relax_frob_matrixcomp(
                     # linear constraint involving U and Y
                     @constraint(
                         model,
-                        Compat.dot((breakpoint_vec * breakpoint_vec'), Y)
-                        ≤ Compat.dot(
+                        LinearAlgebra.dot(breakpoint_vec, Y, breakpoint_vec)
+                        ≤ LinearAlgebra.dot(      
                             k .* [
                                 sum((Û' * breakpoint_vec).^2), 
                                 repeat([1.0], k)...
@@ -2920,9 +2919,9 @@ function φ_ranges_to_polyhedra(
         n = size(f_lite[1], 1)
         model = Model(() -> Gurobi.Optimizer(GRB_ENV))
         @variable(model, c[1:n])
-        @constraint(model, [i=2:n], Compat.dot(c, (f_lite[1] - f_lite[i])) == 0.0)
+        @constraint(model, [i=2:n], LinearAlgebra.dot(c, (f_lite[1] - f_lite[i])) == 0.0)
         @constraint(model, sum(c) == 1)
-        @objective(model, Min, Compat.dot(c, f_lite[1]))
+        @objective(model, Min, LinearAlgebra.dot(c, f_lite[1]))
         optimize!(model)
         if termination_status(model) != OPTIMAL
             error("""
