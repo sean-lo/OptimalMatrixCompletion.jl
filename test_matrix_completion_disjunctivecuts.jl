@@ -15,7 +15,7 @@ function test_matrix_completion_disjunctivecuts(
     γ::Float64,
     ;
     λ::Float64 = 0.0,
-    node_selection::String = "bestfirst",
+    node_selection::String = "breadthfirst",
     bestfirst_depthfirst_cutoff::Int = 10000,
     disjunctive_cuts_type::Union{String, Nothing} = "linear",
     disjunctive_cuts_breakpoints::Union{String, Nothing} = "smallest_1_eigvec",
