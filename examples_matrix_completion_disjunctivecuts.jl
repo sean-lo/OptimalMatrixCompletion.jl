@@ -1000,5 +1000,173 @@ r_6_2f = test_matrix_completion_disjunctivecuts(
     root_only = true,
 )
 
-r_6_2t[3]["run_log"]
-r_6_2f[3]["run_log"]
+r_6_2a_tt432 = test_matrix_completion_disjunctivecuts(
+    2, 20, 20, Int(round(2 * 2 * 20 * log10(20))), 1, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    disjunctive_sorting = false,
+    add_Shor_valid_inequalities = true,
+    add_Shor_valid_inequalities_iterative = true,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present = [4, 3, 2],
+    time_limit = 300,
+    use_max_steps = false,
+    root_only = false,
+)
+r_6_2a_tt43 = test_matrix_completion_disjunctivecuts(
+    2, 20, 20, Int(round(2 * 2 * 20 * log10(20))), 1, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    disjunctive_sorting = false,
+    add_Shor_valid_inequalities = true,
+    add_Shor_valid_inequalities_iterative = true,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present = [4, 3],
+    time_limit = 300,
+    use_max_steps = false,
+    root_only = false,
+)
+
+r_6_2a_t4 = test_matrix_completion_disjunctivecuts(
+    2, 20, 20, Int(round(2 * 2 * 20 * log10(20))), 1, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    disjunctive_sorting = false,
+    add_Shor_valid_inequalities = true,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present = [4],
+    time_limit = 300,
+    use_max_steps = false,
+    root_only = false,
+)
+r_6_2a_tt4 = test_matrix_completion_disjunctivecuts(
+    2, 20, 20, Int(round(2 * 2 * 20 * log10(20))), 1, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    disjunctive_sorting = false,
+    add_Shor_valid_inequalities = true,
+    add_Shor_valid_inequalities_iterative = true,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present = [4],
+    time_limit = 300,
+    use_max_steps = false,
+    root_only = false,
+)
+
+r_6_2a_f = test_matrix_completion_disjunctivecuts(
+    2, 20, 20, Int(round(2 * 2 * 20 * log10(20))), 1, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    disjunctive_sorting = false,
+    add_Shor_valid_inequalities = false,
+    time_limit = 300,
+    use_max_steps = false,
+    root_only = false,
+)
+
+r_6_2a_t43[3]["run_log"]
+r_6_2a_t4[3]["run_log"]
+r_6_2a_f[3]["run_log"]
+
+
+# Experiment 7: Slices of Y
+r_7_1f = test_matrix_completion_disjunctivecuts(
+    1, 10, 10, 30, 0, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    add_Shor_valid_inequalities = false,
+    disjunctive_slices = false,
+    time_limit = 60,
+)
+r_7_1t = test_matrix_completion_disjunctivecuts(
+    1, 10, 10, 30, 0, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    add_Shor_valid_inequalities = true,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present = [4],
+    disjunctive_slices = false,
+    time_limit = 60,
+)
+r_7_2ff = test_matrix_completion_disjunctivecuts(
+    2, 10, 10, 60, 0, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    add_Shor_valid_inequalities = false,
+    disjunctive_slices = false,
+    time_limit = 3600,
+    use_max_steps = false,
+)
+r_7_2ft = test_matrix_completion_disjunctivecuts(
+    2, 10, 10, 60, 0, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    add_Shor_valid_inequalities = false,
+    disjunctive_slices = true,
+    time_limit = 3600,
+    use_max_steps = false,
+)
+r_7_2tf = test_matrix_completion_disjunctivecuts(
+    2, 10, 10, 60, 0, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    add_Shor_valid_inequalities = true,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present = [4],
+    disjunctive_slices = false,
+    time_limit = 3600,
+    use_max_steps = false,
+)
+r_7_2tt = test_matrix_completion_disjunctivecuts(
+    2, 10, 10, 60, 0, 0.01, 20.0;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    add_Shor_valid_inequalities = true,
+    Shor_valid_inequalities_noisy_rank1_num_entries_present = [4],
+    disjunctive_slices = true,
+    time_limit = 3600,
+    use_max_steps = false,
+)
+
+plot(
+    yaxis=:log10,
+    fmt=:png,
+    ylabel="Relative gap", xlabel="Runtime (s)",
+    title="Experiment 7: (k, m, n, i, seed, noise, γ) = (2, 10, 10, 60, 0, 0.01, 20)"
+)
+plot!(
+    r_7_2ff[3]["run_log"][!,:runtime],
+    r_7_2ff[3]["run_log"][!,:gap],
+    label = "Y, without Shor",
+    color = :orange,
+    style = :dash,
+)
+plot!(
+    r_7_2ft[3]["run_log"][!,:runtime],
+    r_7_2ft[3]["run_log"][!,:gap],
+    label = "Slices of Y, without Shor",
+    color = :blue,
+    style = :dash,
+)
+plot!(
+    r_7_2tf[3]["run_log"][!,:runtime],
+    r_7_2tf[3]["run_log"][!,:gap],
+    label = "Y, with Shor",
+    color = :orange,
+    style = :solid,
+)
+plot!(
+    r_7_2tt[3]["run_log"][!,:runtime],
+    r_7_2tt[3]["run_log"][!,:gap],
+    label = "Slices of Y, with Shor",
+    color = :blue,
+    style = :solid,
+)
+
+r_7_2ff[3]["run_log"]
+r_7_2tt[3]["run_log"]
