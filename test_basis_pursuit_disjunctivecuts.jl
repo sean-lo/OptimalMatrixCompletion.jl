@@ -18,6 +18,7 @@ function test_basis_pursuit_disjunctivecuts(
     bestfirst_depthfirst_cutoff::Int = 10000,
     disjunctive_cuts_type::Union{String, Nothing} = "linear",
     disjunctive_cuts_breakpoints::Union{String, Nothing} = "smallest_1_eigvec",
+    disjunctive_slices::Bool = false,
     disjunctive_sorting::Bool = false,
     presolve::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
@@ -40,7 +41,7 @@ function test_basis_pursuit_disjunctivecuts(
     )
 
     log_time = Dates.now()
-    solution, printlist, instance = branchandbound_frob_matrixcomp(
+    r = branchandbound_frob_matrixcomp(
         k,
         A,
         indices,
@@ -53,6 +54,7 @@ function test_basis_pursuit_disjunctivecuts(
         use_disjunctive_cuts = true,
         disjunctive_cuts_type = disjunctive_cuts_type,
         disjunctive_cuts_breakpoints = disjunctive_cuts_breakpoints,
+        disjunctive_slices = disjunctive_slices,
         disjunctive_sorting = disjunctive_sorting,
         presolve = presolve,
         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
@@ -68,6 +70,7 @@ function test_basis_pursuit_disjunctivecuts(
         time_limit = time_limit,
         update_step = update_step,
     )
+    solution, printlist, instance = r[1], r[2], r[3]
 
     if with_log
         time_string = Dates.format(log_time, "yyyymmdd_HHMMSS")
@@ -79,7 +82,7 @@ function test_basis_pursuit_disjunctivecuts(
         end
     end
 
-    return solution, printlist, instance
+    return r
 end
 
 end
