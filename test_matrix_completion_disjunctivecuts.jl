@@ -22,6 +22,7 @@ function test_matrix_completion_disjunctivecuts(
     disjunctive_slices::Bool = false,
     disjunctive_sorting::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
+    add_Shor_valid_inequalities_fraction::Float64 = 1.0,
     add_Shor_valid_inequalities_iterative::Bool = false,
     Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1,2,3,4],
     max_update_Shor_indices_probability::Float64 = 1.0, # TODO
@@ -62,6 +63,7 @@ function test_matrix_completion_disjunctivecuts(
         disjunctive_sorting = disjunctive_sorting,
         presolve = false, # does not apply in noisy case
         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+        add_Shor_valid_inequalities_fraction = add_Shor_valid_inequalities_fraction,
         add_Shor_valid_inequalities_iterative = add_Shor_valid_inequalities_iterative,
         Shor_valid_inequalities_noisy_rank1_num_entries_present = Shor_valid_inequalities_noisy_rank1_num_entries_present,
         max_update_Shor_indices_probability = max_update_Shor_indices_probability,

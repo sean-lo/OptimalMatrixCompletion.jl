@@ -60,6 +60,7 @@ function branchandbound_frob_matrixcomp(
     add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
     Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1, 2, 3, 4],
+    add_Shor_valid_inequalities_fraction::Float64 = 1.0,
     add_Shor_valid_inequalities_iterative::Bool = false,
     max_update_Shor_indices_probability::Float64 = 1.0, # TODO
     min_update_Shor_indices_probability::Float64 = 0.1, # TODO
@@ -165,6 +166,18 @@ function branchandbound_frob_matrixcomp(
         """)
     end
     
+    if add_Shor_valid_inequalities
+        if !(0.0 ≤ add_Shor_valid_inequalities_fraction ≤ 1.0)
+            error(
+                """
+                Argument `add_Shor_valid_inequalities_fraction` = $add_Shor_valid_inequalities_fraction out of bounds [0.0, 1.0].
+                """
+            )
+        end
+    else
+        add_Shor_valid_inequalities_fraction = nothing
+    end
+
     if noise && altmin_flag
         if !(
             0.0 ≤ max_altmin_probability ≤ 1.0
@@ -408,6 +421,7 @@ function branchandbound_frob_matrixcomp(
         "presolve" => presolve,
         "add_basis_pursuit_valid_inequalities" => add_basis_pursuit_valid_inequalities,
         "add_Shor_valid_inequalities" => add_Shor_valid_inequalities,
+        "add_Shor_valid_inequalities_fraction" => add_Shor_valid_inequalities_fraction,
         "add_Shor_valid_inequalities_iterative" => add_Shor_valid_inequalities_iterative,
         "max_update_Shor_indices_probability" => max_update_Shor_indices_probability,
         "min_update_Shor_indices_probability" => min_update_Shor_indices_probability,
@@ -616,6 +630,10 @@ function branchandbound_frob_matrixcomp(
             # Assuming presolve is done:
             # TODO: decide what happens when we don't implement presolve
             initial_node.Shor_constraints_indexes = generate_rank1_basis_pursuit_Shor_constraints_indexes(indices_presolved, 1)
+            initial_node.Shor_constraints_indexes = randsubseq(
+                initial_node.Shor_constraints_indexes,
+                add_Shor_valid_inequalities_fraction,
+            )
             Shor_non_SOC_constraints_indexes = unique(vcat(
                 [
                     [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
@@ -631,6 +649,10 @@ function branchandbound_frob_matrixcomp(
             initial_node.Shor_constraints_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(
                 indices_presolved, 
                 Shor_valid_inequalities_noisy_rank1_num_entries_present
+            )
+            initial_node.Shor_constraints_indexes = randsubseq(
+                initial_node.Shor_constraints_indexes,
+                add_Shor_valid_inequalities_fraction,
             )
             Shor_non_SOC_constraints_indexes = unique(vcat(
                 [

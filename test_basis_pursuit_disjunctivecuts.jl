@@ -23,6 +23,7 @@ function test_basis_pursuit_disjunctivecuts(
     presolve::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
+    add_Shor_valid_inequalities_fraction::Float64 = 1.0,
     max_update_Shor_indices_probability::Float64 = 1.0, # TODO
     min_update_Shor_indices_probability::Float64 = 0.1, # TODO
     update_Shor_indices_probability_decay_rate::Float64 = 1.1, # TODO
@@ -59,6 +60,7 @@ function test_basis_pursuit_disjunctivecuts(
         presolve = presolve,
         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+        add_Shor_valid_inequalities_fraction = add_Shor_valid_inequalities_fraction,
         max_update_Shor_indices_probability = max_update_Shor_indices_probability,
         min_update_Shor_indices_probability = min_update_Shor_indices_probability,
         update_Shor_indices_probability_decay_rate = update_Shor_indices_probability_decay_rate,
