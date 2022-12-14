@@ -2223,6 +2223,11 @@ function relax_frob_matrixcomp(
                     [j=1:m, (t1, t2) in combinations(1:k, 2)],
                     sum(H[(t1,t2),(i,j)] for i in 1:n) == 0
                 )
+                @constraint(
+                    model,
+                    [(i, j) in Shor_SOC_constraints_indexes, (t1, t2) in combinations(1:k, 2)],
+                    [0.5 * Wt[t1,(i,j)], Wt[t2,(i,j)], H[(t1,t2),(i,j)]] in RotatedSecondOrderCone()
+                )
             else
                 @constraint(
                     model, 
