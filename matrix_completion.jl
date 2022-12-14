@@ -14,12 +14,10 @@ using Infiltrator
 
 using JuMP
 using MathOptInterface
-using Gurobi
 using Mosek
 using MosekTools
 using Polyhedra
 
-const GRB_ENV = Gurobi.Env()
 
 @with_kw mutable struct BBNode
     node_id::Int
@@ -1509,6 +1507,7 @@ function relax_feasibility_frob_matrixcomp( # this is the version without matrix
 
     model = Model(Mosek.Optimizer)
     set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
+    set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
 
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
@@ -1719,6 +1718,7 @@ function relax_frob_matrixcomp(
     if solver_output == 0
         set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     end
+    set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
 
     if (add_Shor_valid_inequalities || disjunctive_slices) && k > 1
         @variable(model, Xt[1:k, 1:n, 1:m])
@@ -2446,7 +2446,7 @@ function alternating_minimization(
     counter = 0
     objective_current = 1e10
 
-    model_U = Model(() -> Gurobi.Optimizer(GRB_ENV))
+    model_U = Model(Mosek.Optimizer)
     set_silent(model_U)
     @variable(model_U, U[1:n, 1:k])
     @variable(model_U, t[1:n, 1:n, 1:k])
@@ -2697,7 +2697,7 @@ function alternating_minimization(
         ] in SecondOrderCone()
     )
     
-    model_V = Model(() -> Gurobi.Optimizer(GRB_ENV))
+    model_V = Model(Mosek.Optimizer)
     set_silent(model_V)
     @variable(model_V, V[1:k, 1:m])
 
@@ -2705,6 +2705,7 @@ function alternating_minimization(
     while counter < max_iters
         counter += 1
         # Optimize over V, given U 
+        MOI.set(model_V, MOI.ObjectiveSense(), MOI.FEASIBILITY_SENSE)
         @objective(
             model_V,
             Min,
@@ -2723,7 +2724,8 @@ function alternating_minimization(
         optimize!(model_V)
         global V_new = value.(model_V[:V])
 
-        # Optimize over U, given V 
+        # Optimize over U, given V
+        MOI.set(model_U, MOI.ObjectiveSense(), MOI.FEASIBILITY_SENSE)
         @objective(
             model_U,
             Min,
@@ -3095,7 +3097,7 @@ function φ_ranges_to_polyhedra(
         # which does not contain the origin
         f_lite = angles_to_facet_lite(ϕ1, ϕ2)
         n = size(f_lite[1], 1)
-        model = Model(() -> Gurobi.Optimizer(GRB_ENV))
+        model = Model(Mosek.Optimizer)
         @variable(model, c[1:n])
         @constraint(model, [i=2:n], LinearAlgebra.dot(c, (f_lite[1] - f_lite[i])) == 0.0)
         @constraint(model, sum(c) == 1)
