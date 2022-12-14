@@ -844,12 +844,16 @@ function branchandbound_frob_matrixcomp(
                     )
                 end
             else
+                if noise 
+                    add_basis_pursuit_valid_inequalities = false
+                end
                 if branching_region == "box"
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, false; 
                         branching_region = branching_region, 
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
+                        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
                     )
                 elseif branching_region == "angular"
                     relax_result = @suppress relax_frob_matrixcomp(
@@ -857,12 +861,14 @@ function branchandbound_frob_matrixcomp(
                         branching_region = branching_region, 
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
+                        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
                     )
                 elseif branching_region == "polyhedral"
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, false; 
                         branching_region = branching_region, 
                         polyhedra = polyhedra,
+                        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
                     )
                 elseif branching_region == "hybrid"
                     relax_result = @suppress relax_frob_matrixcomp(
@@ -871,6 +877,7 @@ function branchandbound_frob_matrixcomp(
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper, 
                         polyhedra = polyhedra,
+                        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
                     )
                 end
             end
