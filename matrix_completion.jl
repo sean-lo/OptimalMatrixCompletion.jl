@@ -286,11 +286,21 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("Disjunction breakpoints:                        %15s\n", disjunctive_cuts_breakpoints),
             Printf.@sprintf("Use slices of Y?:                               %15s\n", disjunctive_slices),
             Printf.@sprintf("Apply disjunctive sorting?:                     %15s\n", disjunctive_sorting),
-            (!noise ? 
+        ])
+    end
+    if !noise
+        add_message!(printlist, [
+            (k == 1 ? 
             Printf.@sprintf("(Noiseless) Apply presolve?:                    %15s\n", presolve) : ""),
-            (!noise ? 
+            (k == 1 && presolve ? 
             Printf.@sprintf("(Noiseless) Apply valid inequalities?:          %15s\n", add_basis_pursuit_valid_inequalities) : ""),
+        ])
+    end
+    if use_disjunctive_cuts
+        add_message!(printlist, [
             Printf.@sprintf("Use Shor LMI inequalities?:                     %15s\n", add_Shor_valid_inequalities),
+            (add_Shor_valid_inequalities ?
+            Printf.@sprintf("Proportion of Shor LMI inequalities?:           %15f\n", add_Shor_valid_inequalities_fraction) : ""),
             (noise && add_Shor_valid_inequalities ? 
             Printf.@sprintf("(Noisy) (rank-1) Apply Shor LMI with            %15s entries.\n", Shor_valid_inequalities_noisy_rank1_num_entries_present) : ""),
             (add_Shor_valid_inequalities ? 
@@ -306,10 +316,10 @@ function branchandbound_frob_matrixcomp(
         ])
     else
         add_message!(printlist, [
-            Printf.@sprintf("Use disjunctive cuts?:                     %15s\n", use_disjunctive_cuts),
-            Printf.@sprintf("Branching region:                          %15s\n", branching_region),
-            Printf.@sprintf("Branching type:                            %15s\n", branching_type),
-            Printf.@sprintf("Branching point:                           %15s\n", branch_point),
+            Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
+            Printf.@sprintf("Branching region:                               %15s\n", branching_region),
+            Printf.@sprintf("Branching type:                                 %15s\n", branching_type),
+            Printf.@sprintf("Branching point:                                %15s\n", branch_point),
         ])
     end
 
