@@ -568,7 +568,10 @@ function branchandbound_frob_matrixcomp(
     if use_disjunctive_cuts
         U_lower_initial = -ones(n, k)
         # Symmetry-breaking constraints
-        U_lower_initial[n,:] .= 0.0
+        for i in 1:k
+            U_lower_initial[n-k+i:n,i] .= 0.0
+        end
+        # U_lower_initial[n,:] .= 0.0
         U_upper_initial = ones(n, k)
         initial_node = BBNode(
             U_lower = U_lower_initial, 
@@ -583,7 +586,9 @@ function branchandbound_frob_matrixcomp(
         if branching_region == "box"
             U_lower_initial = -ones(n, k)
             # Symmetry-breaking constraints
-            U_lower_initial[n,:] .= 0.0
+            for i in 1:k
+                U_lower_initial[n-k+i:n,i] .= 0.0
+            end
             U_upper_initial = ones(n, k)
             initial_node = BBNode(
                 U_lower = U_lower_initial, 
@@ -1460,7 +1465,9 @@ function relax_feasibility_frob_matrixcomp( # this is the version without matrix
     branching_region::String = "box",
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
-        U_lower[end,:] .= 0.0
+        for i in 1:k
+            U_lower[n-k+i:n,i] .= 0.0
+        end
         U_lower
     end,
     U_upper::Array{Float64,2} = ones(n,k),
@@ -1626,7 +1633,9 @@ function relax_frob_matrixcomp(
     Shor_SOC_constraints_indexes::Union{Vector, Nothing} = nothing,
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
-        U_lower[end,:] .= 0.0
+        for i in 1:k
+            U_lower[n-k+i:n,i] .= 0.0
+        end
         U_lower
     end,
     U_upper::Array{Float64,2} = ones(n,k),
@@ -2409,7 +2418,9 @@ function alternating_minimization(
     U_initial::Matrix{Float64},
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
-        U_lower[end,:] .= 0.0
+        for i in 1:k
+            U_lower[n-k+i:n,i] .= 0.0
+        end
         U_lower
     end,
     U_upper::Array{Float64,2} = ones(n,k),
