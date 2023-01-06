@@ -626,12 +626,18 @@ function branchandbound_frob_matrixcomp(
             if presolve
                 # compute indices for valid inequalities
                 if k == 1
+                    # Optimized version
                     initial_node.linear_coupling_constraints_indexes = generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved)
+                elseif k == 2
+                    # Optimized version
+                    initial_node.linear_coupling_constraints_indexes = generate_rank2_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved)
                 else
-                    initial_node.linear_coupling_constraints_indexes = [] # TODO
+                    initial_node.linear_coupling_constraints_indexes = generate_rankk_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved, k)
                 end
             else
-                initial_node.linear_coupling_constraints_indexes = [] # TODO
+                error("""
+                `add_basis_pursuit_valid_inequalities` only currently implemented together with `presolve`.
+                """)
             end
         else
             initial_node.linear_coupling_constraints_indexes = []
@@ -2165,18 +2171,23 @@ function relax_frob_matrixcomp(
     end
 
     if !noise && add_basis_pursuit_valid_inequalities
-        if k == 1
-            # linear coupling constraints
-            for ((i1, i2, j1, j2), b) in linear_coupling_constraints_indexes
-                if b == (1, 1, 0, 0)
-                    @constraint(model, A[i1,j1] * X[i2,j2] == A[i1,j2] * X[i2,j1])
-                elseif b == (0, 0, 1, 1)
-                    @constraint(model, A[i2,j1] * X[i1,j2] == A[i2,j2] * X[i1,j1])
-                elseif b == (1, 0, 1, 0)
-                    @constraint(model, A[i1,j1] * X[i2,j2] == A[i2,j1] * X[i1,j2])
-                elseif b == (0, 1, 0, 1)
-                    @constraint(model, A[i1,j2] * X[i2,j1] == A[i2,j2] * X[i1,j1])
-                end
+        for (R, C, type, ind) in linear_coupling_constraints_indexes
+            if type == "col"
+                @constraint(
+                    model, 
+                    sum(
+                        (-1)^i * X[R[i],ind] * det(A[setdiff(R,R[i]),setdiff(C,ind)])
+                        for i in 1:(k+1)
+                    ) == 0
+                )
+            elseif type == "row"
+                @constraint(
+                    model, 
+                    sum(
+                        (-1)^i * X[ind,C[i]] * det(A[setdiff(R,ind),setdiff(C,C[i])])
+                        for i in 1:(k+1)
+                    ) == 0
+                )
             end
         end
     end
@@ -3442,11 +3453,17 @@ function generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(
     # Used in basis pursuit: linear inequalities in rank-1
     (n, m) = size(indices_presolved)
 
-    rowp = sortperm([findfirst(indices_presolved[i,:]) for i in 1:n])
-    colp = sortperm([findfirst(indices_presolved[rowp,j]) for j in 1:m])
+    rowp = sortperm([indices_presolved[i,:] for i in 1:n], rev = true)
+    colp = sortperm([indices_presolved[rowp,j] for j in 1:m], rev = true)
     rowind = unique([findfirst(indices_presolved[rowp, j]) for j in colp])
     colind = unique([findfirst(indices_presolved[i, colp]) for i in rowp])
 
+    constrained_vars_R = Dict(
+        i => [] for i in 1:n
+    )
+    constrained_vars_C = Dict(
+        j => [] for j in 1:m
+    )
     linear_coupling_constraints_indexes = []
     for block_i in 1:length(rowind), block_j in 1:length(colind)
         if block_i == block_j
@@ -3466,17 +3483,23 @@ function generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(
         )
         j_ref = colind[block_i]
         i_ref = rowind[block_j]
+        # (rowp[i_ref], colp[j_start:j_end]) are filled
+        # (rowp[i_start:i_end], colp[j_ref]) are filled
         if (i_end > i_start)
             for i in (i_start+1):i_end, j in j_start:j_end
                 if j_ref < j
                     push!(linear_coupling_constraints_indexes, (
-                        (rowp[i_start], rowp[i], colp[j_ref], colp[j]),
-                        (1, 0, 1, 0)
+                        [rowp[i_start], rowp[i]],
+                        [colp[j_ref], colp[j]],
+                        "col",
+                        colp[j],
                     ))
                 else
                     push!(linear_coupling_constraints_indexes, (
-                        (rowp[i_start], rowp[i], colp[j], colp[j_ref]),
-                        (0, 1, 0, 1) 
+                        [rowp[i_start], rowp[i]],
+                        [colp[j], colp[j_ref]],
+                        "col",
+                        colp[j],
                     ))
                 end
             end
@@ -3485,15 +3508,217 @@ function generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(
             for j in (j_start+1):j_end
                 if i_ref < i_start
                     push!(linear_coupling_constraints_indexes, (
-                        (rowp[i_ref], rowp[i_start], colp[j_start], colp[j]),
-                        (1, 1, 0, 0)
+                        [rowp[i_ref], rowp[i_start]],
+                        [colp[j_start], colp[j]],
+                        "row",
+                        rowp[i_start],
                     ))
                 else
                     push!(linear_coupling_constraints_indexes, (
-                        (rowp[i_start], rowp[i_ref], colp[j_start], colp[j]),
-                        (0, 0, 1, 1)
+                        [rowp[i_start], rowp[i_ref]],
+                        [colp[j_start], colp[j]],
+                        "row",
+                        rowp[i_start],
                     ))
                 end
+            end
+        end
+    end
+
+    return linear_coupling_constraints_indexes
+end
+
+
+function generate_rank2_basis_pursuit_linear_coupling_constraints_indexes(
+    indices_presolved::BitMatrix, # for coupling constraints, in the noiseless case
+)
+    (n, m) = size(indices_presolved)
+
+    constrained_vars_R = Dict(
+        i => [] for i in 1:n
+    )
+    constrained_vars_C = Dict(
+        j => [] for j in 1:m
+    )
+    linear_coupling_constraints_indexes = []
+    for (j0, j1) in combinations(1:m, 2)
+        selected_rows = findall(indices[:,j0] .& indices[:,j1])
+        if length(selected_rows) ≤ 2
+            continue
+        end
+        for j in setdiff(1:m, [j0, j1])
+            C_new = [j0, j1, j]
+            colp = sortperm(C_new)
+            i_choices = findall(indices[:,j0] .& indices[:,j1] .& indices[:,j])
+            if length(i_choices) == 0
+                R_range = [
+                    collect(x) 
+                    for x in Iterators.product(
+                        selected_rows[1:1],
+                        selected_rows[2:2],
+                        selected_rows[3:end],
+                    )
+                ]
+            elseif length(i_choices) == 1
+                i = i_choices[1]
+                R_range = [
+                    sort(collect(x))
+                    for x in Iterators.product(
+                        [i],
+                        setdiff(selected_rows, i)[1:1],
+                        setdiff(selected_rows, i)[2:end],
+                    )
+                ]
+            else
+                continue
+            end
+            for R in R_range
+                if R in constrained_vars_C[j]
+                    continue
+                end
+                push!(constrained_vars_C[j], R)
+                push!(linear_coupling_constraints_indexes, (
+                    R, 
+                    C_new[colp],
+                    "col",
+                    j,
+                ))
+            end
+        end
+    end
+
+    for (i0, i1) in combinations(1:m, 2)
+        selected_cols = findall(indices[:,i0] .& indices[:,i1])
+        if length(selected_cols) ≤ 2
+            continue
+        end
+        for i in setdiff(1:n, [i0, i1])
+            R_new = [i0, i1, i]
+            rowp = sortperm(R_new)
+            j_choices = findall(indices[i0,:] .& indices[i1,:] .& indices[i,:])
+            if length(j_choices) == 0
+                C_range = [
+                    collect(x) 
+                    for x in Iterators.product(
+                        selected_cols[1:1],
+                        selected_cols[2:2],
+                        selected_cols[3:end],
+                    )
+                ]
+            elseif length(j_choices) == 1
+                j = j_choices[1]
+                C_range = [
+                    sort(collect(x))
+                    for x in Iterators.product(
+                        [j],
+                        setdiff(selected_cols, j)[1:1],
+                        setdiff(selected_cols, j)[2:end],
+                    )
+                ]
+            else
+                continue
+            end
+            for C in C_range
+                if C in constrained_vars_R[i]
+                    continue
+                end
+                push!(constrained_vars_R[i], C)
+                push!(linear_coupling_constraints_indexes, (
+                    R_new[rowp],
+                    C,
+                    "row",
+                    i,
+                ))
+            end
+        end
+    end
+
+    return linear_coupling_constraints_indexes
+end
+
+function generate_rankk_basis_pursuit_linear_coupling_constraints_indexes(
+    indices_presolved::BitMatrix, # for coupling constraints, in the noiseless case
+    k::Int,
+)
+    (n, m) = size(indices_presolved)
+
+    constrained_vars_R = Dict(
+        i => [] for i in 1:n
+    )
+    constrained_vars_C = Dict(
+        j => [] for j in 1:m
+    )
+    linear_coupling_constraints_indexes = []
+    for C in combinations(1:m, k)
+        selected_rows = findall(vec(all(indices_presolved[:,C], dims=2)))
+        if length(selected_rows) ≤ k
+            continue
+        end
+        for j in setdiff(1:m, C)
+            C_new = vcat(C, j)
+            colp = sortperm(C_new)
+            i_choices = findall(vec(all(indices_presolved[:,C_new], dims=2)))
+            if length(i_choices) ≥ k
+                continue
+            end
+            h = length(i_choices)
+            remaining_rows = setdiff(selected_rows, i_choices)
+            R_range = [
+                sort(collect(x))
+                for x in Iterators.product(
+                    [[x] for x in i_choices]..., # h
+                    [remaining_rows[ind:ind] for ind in 1:(k-h)]..., # k-h
+                    remaining_rows[k-h+1:end],
+                )
+            ]
+            for R in R_range
+                if R in constrained_vars_C[j]
+                    continue
+                end
+                push!(constrained_vars_C[j], R)
+                push!(linear_coupling_constraints_indexes, (
+                    R, 
+                    C_new[colp],
+                    "col",
+                    j,
+                ))
+            end
+        end
+    end
+
+    for R in combinations(1:n, k)
+        selected_cols = findall(vec(all(indices_presolved[R,:], dims=1)))
+        if length(selected_cols) ≤ k
+            continue
+        end
+        for i in setdiff(1:n, R)
+            R_new = vcat(R, i)
+            rowp = sortperm(R_new)
+            j_choices = findall(vec(all(indices_presolved[R_new,:], dims=1)))
+            if length(j_choices) ≥ k
+                continue
+            end
+            h = length(j_choices)
+            remaining_cols = setdiff(selected_cols, j_choices)
+            C_range = [
+                sort(collect(x))
+                for x in Iterators.product(
+                    [[x] for x in j_choices]...,
+                    [remaining_cols[ind:ind] for ind in 1:k-h]...,
+                    remaining_cols[k-h+1:end],
+                )
+            ]
+            for C in C_range
+                if C in constrained_vars_R[i]
+                    continue
+                end
+                push!(constrained_vars_R[i], C)
+                push!(linear_coupling_constraints_indexes, (
+                    R_new[rowp],
+                    C,
+                    "row",
+                    i,
+                ))
             end
         end
     end
