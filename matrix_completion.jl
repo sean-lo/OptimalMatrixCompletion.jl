@@ -3793,7 +3793,7 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
 
     for num_entries_present in num_entries_present_list
         if num_entries_present == 4    
-            for i1 in 1:(n-1), i2 in (i1+1):n
+            for (i1, i2) in combinations(1:n, 2)
                 for j1 in 1:(m-1)
                     if indices[i1,j1] == 1 && indices[i2,j1] == 1
                         # only looks for j2 after j1, 
@@ -3805,7 +3805,7 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
                 end
             end
         elseif num_entries_present == 3
-            for i1 in 1:(n-1), i2 in (i1+1):n
+            for (i1, i2) in combinations(1:n, 2)
                 for j1 in 1:m
                     if indices[i1,j1] == 1 && indices[i2,j1] == 1
                         # Looks for j2 in 1:n, 
@@ -3818,7 +3818,7 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
             end
         elseif num_entries_present == 2
             # (a): [1 0; 1 0] and [0 1; 0 1]
-            for i1 in 1:(n-1), i2 in (i1+1):n
+            for (i1, i2) in combinations(1:n, 2)
                 for j1 in 1:m
                     if indices[i1,j1] == 1 && indices[i2,j1] == 1
                         for j2 in findall(.~(indices[i1,:] .| indices[i2,:]))
@@ -3828,13 +3828,13 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
                 end
             end
             # (b): all other cases
-            for i1 in 1:(n-1), i2 in (i1+1):n
+            for (i1, i2) in combinations(1:n, 2)
                 for (j1, j2) in combinations(findall(indices[i1,:] .⊻ indices[i2,:]), 2)
                     push!(Shor_constraints_indexes, (i1, i2, j1, j2))
                 end
             end
         elseif num_entries_present == 1
-            for i1 in 1:(n-1), i2 in (i1+1):n
+            for (i1, i2) in combinations(1:n, 2)
                 for j1 in 1:m
                     if indices[i1,j1] + indices[i2,j1] == 1
                         # Looks for j2 in 1:n, 
@@ -3846,7 +3846,7 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
                 end
             end
         elseif num_entries_present == 0
-            for i1 in 1:(n-1), i2 in (i1+1):n
+            for (i1, i2) in combinations(1:n, 2)
                 for j1 in 1:(m-1)
                     if indices[i1,j1] == indices[i2,j1] == 0
                         # Looks for j2 in 1:n, 
