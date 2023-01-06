@@ -3733,8 +3733,8 @@ function generate_rank1_basis_pursuit_Shor_constraints_indexes(
     # Used in basis pursuit: Shor LMIs in rank-1
     (n, m) = size(indices_presolved)
 
-    rowp = sortperm([findfirst(indices_presolved[i,:]) for i in 1:n])
-    colp = sortperm([findfirst(indices_presolved[rowp,j]) for j in 1:m])
+    rowp = sortperm([indices_presolved[i,:] for i in 1:n], rev = true)
+    colp = sortperm([indices_presolved[rowp,j] for j in 1:m], rev = true)
     rowind = unique([findfirst(indices_presolved[rowp, j]) for j in colp])
     colind = unique([findfirst(indices_presolved[i, colp]) for i in rowp])
 
