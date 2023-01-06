@@ -72,7 +72,47 @@ function generate_masked_bitmatrix(
     end
 end
 
-function generate_matrixcomp_data( # FIXME! make matrices seeds different
+function generate_sparse_masked_bitmatrix(
+    dim1::Int,
+    dim2::Int,
+    sparsity::Int,
+    seed::Int,
+)
+    Random.seed!(seed)
+    indices = falses(dim1, dim2)
+    # Stage 1: sample max(dim1, dim2) entries such that each row and column has at least 1 entry
+    n_filled = max(dim1, dim2)
+    perm = randperm(n_filled)
+    if dim1 == dim2
+        for i in 1:dim1
+            indices[i,perm[i]] = true
+        end
+    elseif dim1 < dim2
+        for j in 1:dim2
+            if perm[j] > dim1
+                indices[rand(1:dim1),j] = true
+            else
+                indices[perm[j],j] = true
+            end
+        end
+    elseif dim1 > dim2
+        for i in 1:dim1
+            if perm[i] > dim2
+                indices[i,rand(1:dim2)] = true
+            else
+                indices[i,perm[i]] = true
+            end
+        end
+    end
+    # Stage 2: sample uniformly at random 
+    # (sparsity - max(dim1, dim2)) entries
+    # from all other possibilities
+    options = setdiff(1:(dim1*dim2), findall(reshape(indices, (dim1*dim2))))
+    indices[shuffle(options)[1:(sparsity - n_filled)]] .= true
+    return indices
+end
+
+function generate_matrixcomp_data(
     k::Int,
     m::Int,
     n::Int,
@@ -108,6 +148,10 @@ function generate_matrixcomp_data( # FIXME! make matrices seeds different
         A_noise = randn(MersenneTwister(seeds[3]), Float64, (1000, 1000))[1:n, 1:m]
         A = A + ϵ * A_noise
     end
-    indices = generate_masked_bitmatrix(n, m, n_indices, seeds[4])
+    if (n + m) * k ≤ n_indices < Int(ceil((n + m) * k * log10(min(n, m))))
+        indices = generate_sparse_masked_bitmatrix(n, m, n_indices, seeds[4])
+    else
+        indices = generate_masked_bitmatrix(n, m, n_indices, seeds[4])
+    end
     return A, indices
 end
