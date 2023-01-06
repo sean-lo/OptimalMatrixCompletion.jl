@@ -465,8 +465,8 @@ function branchandbound_frob_matrixcomp(
         "nodes_relax_feasible_split_altmin_improvement" => nodes_relax_feasible_split_altmin_improvement,
     )
 
-    if !noise && presolve && k == 1
-        indices_presolved, X_presolved = rank1_presolve(indices, A)
+    if !noise && presolve
+        indices_presolved, X_presolved = rankk_presolve(indices, A, k)
         instance["run_details"]["entries_presolved"] = sum(indices_presolved)
         X_initial = X_presolved
         U_initial = svd(X_initial).U[:,1:k]
@@ -3444,6 +3444,94 @@ function rank1_presolve(
         end
     end
 
+    return indices_presolved, X_presolved
+end
+
+function rank2_presolve(
+    indices::BitMatrix,
+    A::Array{Float64, 2},
+)
+    indices_presolved = copy(indices)
+    (n, m) = size(indices)
+    X_presolved = zeros(Float64, (n, m))
+    X_presolved[indices] = A[indices]
+    current_sum = sum(indices_presolved)
+
+    while true
+        for (j0, j1) in combinations(1:m, 2)
+            selected_rows = findall(indices_presolved[:,j0] .& indices_presolved[:,j1])
+            if length(selected_rows) ≤ 2
+                continue
+            end
+            for j2 in setdiff(1:m, [j0, j1])
+                filled_rows = selected_rows[findall(indices_presolved[selected_rows, j2])]
+                if !(2 ≤ length(filled_rows) < length(selected_rows))
+                    continue
+                end
+                (i0, i1) = filled_rows[1:2]
+                for i2 in setdiff(selected_rows, filled_rows)
+                    X_presolved[i2,j2] = (
+                        X_presolved[i0,j0] * X_presolved[i1,j2] * X_presolved[i2,j1] 
+                        + X_presolved[i0,j2] * X_presolved[i1,j1] * X_presolved[i2,j0] 
+                        - X_presolved[i0,j1] * X_presolved[i1,j2] * X_presolved[i2,j0] 
+                        - X_presolved[i0,j2] * X_presolved[i1,j0] * X_presolved[i2,j1] 
+                    ) / (
+                        X_presolved[i0,j0] * X_presolved[i1,j1] 
+                        - X_presolved[i0,j1] * X_presolved[i1,j0]
+                    )
+                    indices_presolved[i2,j2] = true
+                end
+            end
+        end
+        if current_sum == sum(indices_presolved)
+            break
+        else
+            current_sum = sum(indices_presolved)
+        end
+    end
+    return indices_presolved, X_presolved
+end
+
+function rankk_presolve(
+    indices::BitMatrix,
+    A::Array{Float64, 2},
+    k::Int,
+)
+    indices_presolved = copy(indices)
+    (n, m) = size(indices)
+    X_presolved = zeros(Float64, (n, m))
+    X_presolved[indices] = A[indices]
+    current_sum = sum(indices_presolved)
+
+    while true
+        for C in combinations(1:m, k)
+            selected_rows = findall(vec(all(indices_presolved[:,C], dims=2)))
+            if length(selected_rows) ≤ k
+                continue
+            end
+            for j in setdiff(1:m, C)
+                filled_rows = selected_rows[
+                    findall(indices_presolved[selected_rows, j])
+                ]
+                if !(k ≤ length(filled_rows) < length(selected_rows))
+                    continue
+                end
+                R = filled_rows[1:k]
+                for i in setdiff(selected_rows, filled_rows)
+                    X_presolved[i,j] = sum(
+                        (-1)^(ind-1) * X_presolved[R[ind],j] * det(X_presolved[union(setdiff(R, R[ind]), i),collect(C)])
+                        for ind in 1:k
+                    ) / det(X_presolved[R,collect(C)])
+                    indices_presolved[i,j] = true
+                end
+            end
+        end
+        if current_sum == sum(indices_presolved)
+            break
+        else
+            current_sum = sum(indices_presolved)
+        end
+    end
     return indices_presolved, X_presolved
 end
 
