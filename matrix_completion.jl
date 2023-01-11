@@ -1015,31 +1015,33 @@ function branchandbound_frob_matrixcomp(
                         altmin_results_BB["n_iters"],
                     ]
                 )
-                X_local = altmin_results_BB["U"] * altmin_results_BB["V"]
-                U_local = svd(X_local).U[:,1:k] 
-                # no guarantees that this will be within U_lower and U_upper
-                Y_local = U_local * U_local'
-                # guaranteed to be a projection matrix since U_local is a svd result
-                
-                objective_local = evaluate_objective(
-                    X_local, A, indices, U_local, γ, λ, noise
-                )
-
-                if objective_local < solution["objective"]
-                    nodes_relax_feasible_split_altmin_improvement += 1
-                    solution["objective"] = objective_local
-                    upper = objective_local
-                    solution["Y"] = copy(Y_local)
-                    solution["U"] = copy(U_local)
-                    solution["X"] = copy(X_local)
-                    now_gap = add_update!(
-                        printlist, instance, nodes_explored, counter, lower, upper, start_time,
-                        ; 
-                        altmin_flag = true,
+                # it's possible for alternating minimization here to diverge, 
+                # especially when `use_disjunctive_cuts = false`
+                # in this case, don't compute local solution
+                if altmin_results_BB["converged"]
+                    X_local = altmin_results_BB["U"] * altmin_results_BB["V"]
+                    U_local = svd(X_local).U[:,1:k] 
+                    # no guarantees that this will be within U_lower and U_upper
+                    Y_local = U_local * U_local'
+                    # guaranteed to be a projection matrix since U_local is a svd result
+                    objective_local = evaluate_objective(
+                        X_local, A, indices, U_local, γ, λ, noise
                     )
-                    last_updated_counter = counter
+                    if objective_local < solution["objective"]
+                        nodes_relax_feasible_split_altmin_improvement += 1
+                        solution["objective"] = objective_local
+                        upper = objective_local
+                        solution["Y"] = copy(Y_local)
+                        solution["U"] = copy(U_local)
+                        solution["X"] = copy(X_local)
+                        now_gap = add_update!(
+                            printlist, instance, nodes_explored, counter, lower, upper, start_time,
+                            ; 
+                            altmin_flag = true,
+                        )
+                        last_updated_counter = counter
+                    end
                 end
-
             end
         end
 
@@ -2453,9 +2455,9 @@ function alternating_minimization(
     end,
     U_upper::Array{Float64,2} = ones(n,k),
     matrix_cuts::Union{Vector, Nothing} = nothing,
-    ϵ::Float64 = 1e-6,
+    ϵ::Float64 = 1e-5,
     orthogonality_tolerance::Float64 = 1e-8,
-    max_iters::Int = 10000,
+    max_iters::Int = 100,
 )
     # Note: only used in the noisy case
     altmin_start_time = time()
@@ -2723,6 +2725,9 @@ function alternating_minimization(
     @variable(model_V, V[1:k, 1:m])
 
     objectives = []
+    converged = false
+    U_new = zeros(n, k)
+    V_new = zeros(k, m)
     while counter < max_iters
         counter += 1
         # Optimize over V, given U 
@@ -2743,7 +2748,7 @@ function alternating_minimization(
             )
         )
         optimize!(model_V)
-        global V_new = value.(model_V[:V])
+        V_new = value.(model_V[:V])
 
         # Optimize over U, given V
         MOI.set(model_U, MOI.ObjectiveSense(), MOI.FEASIBILITY_SENSE)
@@ -2763,31 +2768,47 @@ function alternating_minimization(
             )
         )
         optimize!(model_U)
-        global U_new = value.(model_U[:U])
+        U_new = value.(model_U[:U])
 
-        objective_new = objective_value(model_U)
-        
-        push!(objectives, objective_new)
-        objective_diff = abs((objective_new - objective_current) / objective_current)
-        if objective_diff < ϵ # objectives don't oscillate!
-            break
-        elseif (
-            length(objectives) > 5
-            && all(
-                (objectives[end-i] > objectives[end-5])
-                for i in 0:4
+        try
+            objective_new = objective_value(model_U)
+            push!(objectives, objective_new)
+            objective_diff = abs((objective_new - objective_current) / objective_current)
+            if objective_diff < ϵ # objectives don't oscillate!
+                converged = true
+            elseif (
+                length(objectives) > 5
+                && all(
+                    (objectives[end-i] > objectives[end-5])
+                    for i in 0:4
+                )
             )
-        )
+                converged = true
+            end
+
+            if converged
+                altmin_end_time = time()
+                return Dict(
+                    "converged" => converged,
+                    "U" => U_new, 
+                    "V" => V_new,
+                    "solve_time" => (altmin_end_time - altmin_start_time),
+                    "n_iters" => counter,
+                )
+            end
+
+            U_current = U_new
+            V_current = V_new
+            objective_current = objective_new
+        catch
             break
         end
-        U_current = U_new
-        V_current = V_new
-        objective_current = objective_new
     end
 
     altmin_end_time = time()
 
     return Dict(
+        "converged" => converged,
         "U" => U_new, 
         "V" => V_new, 
         "solve_time" => (altmin_end_time - altmin_start_time),
