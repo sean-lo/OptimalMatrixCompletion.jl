@@ -520,6 +520,7 @@ function branchandbound_frob_matrixcomp(
             disjunctive_sorting = disjunctive_sorting,
             U_initial = altmin_U_initial,
             matrix_cuts = [],
+            time_limit = time_limit,
         )
         solve_time_altmin += altmin_results["solve_time"]
         push!(
@@ -805,12 +806,14 @@ function branchandbound_frob_matrixcomp(
                     branching_region = branching_region,
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
+                    time_limit = time_limit,
                 )
             elseif branching_region == "polyhedral"
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
                     n, k, A, indices, noise;
                     branching_region = branching_region,
                     polyhedra = polyhedra,
+                    time_limit = time_limit,
                 )
             elseif branching_region == "hybrid"
                 relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
@@ -819,6 +822,7 @@ function branchandbound_frob_matrixcomp(
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                     polyhedra = polyhedra,
+                    time_limit = time_limit,
                 )
             end
             solve_time_relaxation_feasibility += relax_feasibility_result["time_taken"]
@@ -843,6 +847,7 @@ function branchandbound_frob_matrixcomp(
                         Shor_constraints_indexes = current_node.Shor_constraints_indexes,
                         Shor_SOC_constraints_indexes = current_node.Shor_SOC_constraints_indexes,
                         matrix_cuts = current_node.matrix_cuts,
+                        time_limit = time_limit,
                     )
                 else
                     relax_result = @suppress relax_frob_matrixcomp(
@@ -855,6 +860,7 @@ function branchandbound_frob_matrixcomp(
                         Shor_constraints_indexes = current_node.Shor_constraints_indexes,
                         Shor_SOC_constraints_indexes = current_node.Shor_SOC_constraints_indexes,
                         matrix_cuts = current_node.matrix_cuts,
+                        time_limit = time_limit,
                     )
                 end
             else
@@ -868,6 +874,7 @@ function branchandbound_frob_matrixcomp(
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
                         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
+                        time_limit = time_limit,
                     )
                 elseif branching_region == "angular"
                     relax_result = @suppress relax_frob_matrixcomp(
@@ -876,6 +883,7 @@ function branchandbound_frob_matrixcomp(
                         U_lower = current_node.U_lower, 
                         U_upper = current_node.U_upper,
                         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
+                        time_limit = time_limit,
                     )
                 elseif branching_region == "polyhedral"
                     relax_result = @suppress relax_frob_matrixcomp(
@@ -883,6 +891,7 @@ function branchandbound_frob_matrixcomp(
                         branching_region = branching_region, 
                         polyhedra = polyhedra,
                         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
+                        time_limit = time_limit,
                     )
                 elseif branching_region == "hybrid"
                     relax_result = @suppress relax_frob_matrixcomp(
@@ -892,6 +901,7 @@ function branchandbound_frob_matrixcomp(
                         U_upper = current_node.U_upper, 
                         polyhedra = polyhedra,
                         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
+                        time_limit = time_limit,
                     )
                 end
             end
@@ -987,6 +997,7 @@ function branchandbound_frob_matrixcomp(
                         disjunctive_sorting = disjunctive_sorting,
                         U_initial = Matrix(U_rounded),
                         matrix_cuts = current_node.matrix_cuts,
+                        time_limit = time_limit,
                     )
                 else
                     altmin_results_BB = @suppress alternating_minimization(
@@ -995,6 +1006,7 @@ function branchandbound_frob_matrixcomp(
                         U_initial = Matrix(U_rounded),
                         U_lower = current_node.U_lower,
                         U_upper = current_node.U_upper,
+                        time_limit = time_limit,
                     )
                 end
                 nodes_relax_feasible_split_altmin += 1
@@ -1496,6 +1508,7 @@ function relax_feasibility_frob_matrixcomp( # this is the version without matrix
     U_upper::Array{Float64,2} = ones(n,k),
     polyhedra::Union{Vector, Nothing} = nothing,
     orthogonality_tolerance::Float64 = 0.0,
+    time_limit::Int = 3600,
 )
     if !(branching_region in ["box", "angular", "polyhedral", "hybrid"])
         error("""
@@ -1526,6 +1539,7 @@ function relax_feasibility_frob_matrixcomp( # this is the version without matrix
     model = Model(Mosek.Optimizer)
     set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
+    set_time_limit_sec(model, time_limit)
 
     @variable(model, U[1:n, 1:k])
     @variable(model, t[1:n, 1:k, 1:k])
@@ -1667,6 +1681,7 @@ function relax_frob_matrixcomp(
     matrix_cuts::Union{Vector, Nothing} = nothing,
     orthogonality_tolerance::Float64 = 0.0,
     solver_output::Int = 0,
+    time_limit::Int = 3600, # forces Mosek to not use a time limit
 )
     # TODO: only for noisy case: remove?
     function compute_α(Y, γ, A, indices)
@@ -1737,6 +1752,7 @@ function relax_frob_matrixcomp(
         set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     end
     set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
+    set_time_limit_sec(model, time_limit)
 
     if (add_Shor_valid_inequalities || disjunctive_slices) && k > 1
         @variable(model, Xt[1:k, 1:n, 1:m])
@@ -2458,6 +2474,7 @@ function alternating_minimization(
     ϵ::Float64 = 1e-5,
     orthogonality_tolerance::Float64 = 1e-8,
     max_iters::Int = 100,
+    time_limit::Int = 3600,
 )
     # Note: only used in the noisy case
     altmin_start_time = time()
@@ -2728,7 +2745,10 @@ function alternating_minimization(
     converged = false
     U_new = zeros(n, k)
     V_new = zeros(k, m)
-    while counter < max_iters
+    while (
+        counter < max_iters
+        && time() - altmin_start_time < time_limit
+    )
         counter += 1
         # Optimize over V, given U 
         MOI.set(model_V, MOI.ObjectiveSense(), MOI.FEASIBILITY_SENSE)
