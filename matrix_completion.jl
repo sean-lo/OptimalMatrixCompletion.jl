@@ -2384,7 +2384,10 @@ function relax_frob_matrixcomp(
             MOI.LOCALLY_SOLVED,
         ] 
         || (
-            JuMP.termination_status(model) == MOI.SLOW_PROGRESS
+            JuMP.termination_status(model) in [
+                MOI.SLOW_PROGRESS,
+                MOI.TIME_LIMIT,
+            ]
             && has_values(model)
         )
     )
@@ -2436,7 +2439,10 @@ function relax_frob_matrixcomp(
             MOI.INFEASIBLE_OR_UNBOUNDED,
         ] 
         || (
-            JuMP.termination_status(model) == MOI.SLOW_PROGRESS
+            JuMP.termination_status(model) in [
+                MOI.SLOW_PROGRESS,
+                MOI.TIME_LIMIT,
+            ]
             && !has_values(model)
         )
     )
