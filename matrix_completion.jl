@@ -3565,10 +3565,17 @@ function rankk_presolve(
                 end
                 R = filled_rows[1:k]
                 for i in setdiff(selected_rows, filled_rows)
-                    X_presolved[i,j] = sum(
-                        (-1)^(ind-1) * X_presolved[R[ind],j] * det(X_presolved[union(setdiff(R, R[ind]), i),collect(C)])
-                        for ind in 1:k
-                    ) / det(X_presolved[R,collect(C)])
+                    r_ind = searchsortedfirst(R, i) - 1
+                    R_top = R[1:r_ind]
+                    R_bot = R[r_ind+1:end]
+                    cumsum = 0
+                    for ind in 1:r_ind
+                        cumsum += (-1)^(ind-1) * X_presolved[R[r_ind+1-ind],j] * det(X_presolved[union(setdiff(R_top, R_top[r_ind+1-ind]), i, R_bot),collect(C)])
+                    end
+                    for ind in 1:k-r_ind
+                        cumsum += (-1)^(ind-1) * X_presolved[R[r_ind+ind],j] * det(X_presolved[union(R_top, i, setdiff(R_bot, R_bot[ind]), i),collect(C)])
+                    end
+                    X_presolved[i,j] = cumsum / det(X_presolved[R,collect(C)])
                     indices_presolved[i,j] = true
                 end
             end
