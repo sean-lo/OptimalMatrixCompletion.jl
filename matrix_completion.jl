@@ -920,7 +920,8 @@ function branchandbound_frob_matrixcomp(
             elseif relax_result["termination_status"] in [
                 MOI.OPTIMAL,
                 MOI.LOCALLY_SOLVED, # TODO: investigate this
-                MOI.SLOW_PROGRESS # TODO: investigate this
+                MOI.SLOW_PROGRESS, # TODO: investigate this
+                MOI.TIME_LIMIT,
             ]
                 nodes_relax_feasible += 1
                 objective_relax = relax_result["objective"]
