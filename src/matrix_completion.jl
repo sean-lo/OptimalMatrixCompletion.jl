@@ -1,3 +1,5 @@
+module MCBnB
+
 using LinearAlgebra
 using Arpack
 using Random
@@ -18,6 +20,8 @@ using Mosek
 using MosekTools
 using Polyhedra
 
+export branchandbound_frob_matrixcomp
+export BBNode
 
 @with_kw mutable struct BBNode
     node_id::Int
@@ -3765,4 +3769,6 @@ function generate_violated_Shor_minors(
         partialsort!(minors, 1:n_minors, rev=true)
         return minors[1:n_minors]
     end
+end
+
 end

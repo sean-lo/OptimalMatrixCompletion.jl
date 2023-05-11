@@ -1,37 +1,34 @@
-module TestMatrixCompletionDisjunctiveCuts
+module TestBasisPursuitDisjunctiveCuts
 
 include("matrix_completion.jl")
 include("utils.jl")
 
-export test_matrix_completion_disjunctivecuts
+using .MCBnB
 
-function test_matrix_completion_disjunctivecuts(
+export test_basis_pursuit_disjunctivecuts
+
+function test_basis_pursuit_disjunctivecuts(
     k::Int,
     m::Int,
     n::Int,
     n_indices::Int,
     seed::Int,
-    ϵ::Float64, 
-    γ::Float64,
     ;
+    γ::Float64 = 1.0,
     λ::Float64 = 0.0,
     node_selection::String = "breadthfirst",
     bestfirst_depthfirst_cutoff::Int = 10000,
     disjunctive_cuts_type::Union{String, Nothing} = "linear",
     disjunctive_cuts_breakpoints::Union{String, Nothing} = "smallest_1_eigvec",
+    presolve::Bool = false,
+    add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities_fraction::Float64 = 1.0,
-    add_Shor_valid_inequalities_iterative::Bool = false,
-    Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1,2,3,4],
     max_update_Shor_indices_probability::Float64 = 1.0, # TODO
     min_update_Shor_indices_probability::Float64 = 0.1, # TODO
     update_Shor_indices_probability_decay_rate::Float64 = 1.1, # TODO
     update_Shor_indices_n_minors::Int = 100,
     root_only::Bool = false,
-    altmin_flag::Bool = true,
-    max_altmin_probability::Float64 = 1.0,
-    min_altmin_probability::Float64 = 0.005,
-    altmin_probability_decay_rate::Float64 = 1.1,
     use_max_steps::Bool = true,
     max_steps::Int = 10000,
     time_limit::Int = 3600,
@@ -40,7 +37,7 @@ function test_matrix_completion_disjunctivecuts(
 )
     (A, indices) = generate_matrixcomp_data(
         k, m, n, n_indices, seed; 
-        noise = true, ϵ = ϵ,
+        noise = false, ϵ = 0.0,
     )
 
     log_time = Dates.now()
@@ -50,27 +47,22 @@ function test_matrix_completion_disjunctivecuts(
         indices,
         γ,
         λ,
-        true, # noise
+        false, # noise
         ;
         node_selection = node_selection,
         bestfirst_depthfirst_cutoff = bestfirst_depthfirst_cutoff,
         use_disjunctive_cuts = true,
         disjunctive_cuts_type = disjunctive_cuts_type,
         disjunctive_cuts_breakpoints = disjunctive_cuts_breakpoints,
-        presolve = false, # does not apply in noisy case
+        presolve = presolve,
+        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
         add_Shor_valid_inequalities_fraction = add_Shor_valid_inequalities_fraction,
-        add_Shor_valid_inequalities_iterative = add_Shor_valid_inequalities_iterative,
-        Shor_valid_inequalities_noisy_rank1_num_entries_present = Shor_valid_inequalities_noisy_rank1_num_entries_present,
         max_update_Shor_indices_probability = max_update_Shor_indices_probability,
         min_update_Shor_indices_probability = min_update_Shor_indices_probability,
         update_Shor_indices_probability_decay_rate = update_Shor_indices_probability_decay_rate,
         update_Shor_indices_n_minors = update_Shor_indices_n_minors,
         root_only = root_only,
-        altmin_flag = altmin_flag,
-        max_altmin_probability = max_altmin_probability,
-        min_altmin_probability = min_altmin_probability,
-        altmin_probability_decay_rate = altmin_probability_decay_rate,
         use_max_steps = use_max_steps,
         max_steps = max_steps,
         time_limit = time_limit,
@@ -93,33 +85,30 @@ end
 
 end
 
-module TestMatrixCompletionNonDisjunctiveCuts
+module TestBasisPursuitNonDisjunctiveCuts
 
 include("matrix_completion.jl")
 include("utils.jl")
 
-export test_matrix_completion_nondisjunctivecuts
+export test_basis_pursuit_nondisjunctivecuts
 
-function test_matrix_completion_nondisjunctivecuts(
+function test_basis_pursuit_nondisjunctivecuts(
     k::Int,
     m::Int,
     n::Int,
     n_indices::Int,
     seed::Int,
-    ϵ::Float64, 
-    γ::Float64,
     ;
+    γ::Float64 = 1.0,
     λ::Float64 = 0.0,
     branching_region::String = "box",
     branching_type::String = "lexicographic",
     branch_point::String = "midpoint",
     node_selection::String = "breadthfirst",
     bestfirst_depthfirst_cutoff::Int = 10000,
+    presolve::Bool = false,
+    add_basis_pursuit_valid_inequalities::Bool = false,
     root_only::Bool = false,
-    altmin_flag::Bool = true,
-    max_altmin_probability::Float64 = 1.0,
-    min_altmin_probability::Float64 = 0.005,
-    altmin_probability_decay_rate::Float64 = 1.1,
     use_max_steps::Bool = true,
     max_steps::Int = 10000,
     time_limit::Int = 3600,
@@ -128,7 +117,7 @@ function test_matrix_completion_nondisjunctivecuts(
 )
     (A, indices) = generate_matrixcomp_data(
         k, m, n, n_indices, seed; 
-        noise = true, ϵ = ϵ,
+        noise = false, ϵ = 0.0,
     )
 
     log_time = Dates.now()
@@ -138,7 +127,7 @@ function test_matrix_completion_nondisjunctivecuts(
         indices,
         γ,
         λ,
-        true, # noise
+        false, # noise
         ;
         branching_region = branching_region,
         branching_type = branching_type,
@@ -146,11 +135,9 @@ function test_matrix_completion_nondisjunctivecuts(
         node_selection = node_selection,
         bestfirst_depthfirst_cutoff = bestfirst_depthfirst_cutoff,
         use_disjunctive_cuts = false,
+        presolve = presolve,
+        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
         root_only = root_only,
-        altmin_flag = altmin_flag,
-        max_altmin_probability = max_altmin_probability,
-        min_altmin_probability = min_altmin_probability,
-        altmin_probability_decay_rate = altmin_probability_decay_rate,
         use_max_steps = use_max_steps,
         max_steps = max_steps,
         time_limit = time_limit,
@@ -159,7 +146,7 @@ function test_matrix_completion_nondisjunctivecuts(
     solution, printlist, instance = r[1], r[2], r[3]
 
     if with_log
-        time_string = Dates.format(log_time, "yyyymmdd_HHMMSS")
+        time_string = lexicographicDates.format(log_time, "yyyymmdd_HHMMSS")
         outfile = "logs/" * time_string * ".txt"
         open(outfile, "a+") do f
             for note in printlist
