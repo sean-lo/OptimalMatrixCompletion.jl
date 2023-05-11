@@ -1,6 +1,6 @@
 module TestBasisPursuitDisjunctiveCuts
 
-include("matrix_completion.jl")
+include("MCBnB.jl")
 include("utils.jl")
 
 using .MCBnB
@@ -87,7 +87,7 @@ end
 
 module TestBasisPursuitNonDisjunctiveCuts
 
-include("matrix_completion.jl")
+include("MCBnB.jl")
 include("utils.jl")
 
 export test_basis_pursuit_nondisjunctivecuts

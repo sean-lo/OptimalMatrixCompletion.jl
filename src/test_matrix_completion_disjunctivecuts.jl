@@ -1,6 +1,6 @@
 module TestMatrixCompletionDisjunctiveCuts
 
-include("matrix_completion.jl")
+include("MCBnB.jl")
 include("utils.jl")
 
 using .MCBnB
@@ -97,7 +97,7 @@ end
 
 module TestMatrixCompletionNonDisjunctiveCuts
 
-include("matrix_completion.jl")
+include("MCBnB.jl")
 include("utils.jl")
 
 export test_matrix_completion_nondisjunctivecuts

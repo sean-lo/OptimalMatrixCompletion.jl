@@ -21,6 +21,7 @@ using MosekTools
 using Polyhedra
 
 export branchandbound_frob_matrixcomp
+export rankk_presolve
 export BBNode
 
 @with_kw mutable struct BBNode
