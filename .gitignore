@@ -1,1 +1,2 @@
-examples_*.jl
+.gitignore
+src/examples_*.jl
