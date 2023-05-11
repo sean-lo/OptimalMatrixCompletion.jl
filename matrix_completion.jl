@@ -52,7 +52,6 @@ function branchandbound_frob_matrixcomp(
     use_disjunctive_cuts::Bool = true,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing, # either "smallest_1_eigvec" or "smallest_2_eigvec"
-    disjunctive_sorting::Bool = false,
     presolve::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
@@ -283,7 +282,6 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
             Printf.@sprintf("Disjunctive cuts type:                          %15s\n", disjunctive_cuts_type),
             Printf.@sprintf("Disjunction breakpoints:                        %15s\n", disjunctive_cuts_breakpoints),
-            Printf.@sprintf("Apply disjunctive sorting?:                     %15s\n", disjunctive_sorting),
         ])
     end
     if !noise
@@ -423,7 +421,7 @@ function branchandbound_frob_matrixcomp(
         "disjunctive_cuts_type" => disjunctive_cuts_type,
         "disjunctive_cuts_breakpoints" => disjunctive_cuts_breakpoints,
         "disjunctive_slices" => false, # deprecated
-        "disjunctive_sorting" => disjunctive_sorting,
+        "disjunctive_sorting" => false, # deprecated
         "presolve" => presolve,
         "add_basis_pursuit_valid_inequalities" => add_basis_pursuit_valid_inequalities,
         "add_Shor_valid_inequalities" => add_Shor_valid_inequalities,
@@ -514,7 +512,6 @@ function branchandbound_frob_matrixcomp(
             A, n, k, indices, γ, λ, use_disjunctive_cuts,
             ;
             disjunctive_cuts_type = disjunctive_cuts_type,
-            disjunctive_sorting = disjunctive_sorting,
             U_initial = altmin_U_initial,
             matrix_cuts = [],
             time_limit = time_limit,
@@ -836,7 +833,6 @@ function branchandbound_frob_matrixcomp(
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
-                        disjunctive_sorting = disjunctive_sorting,
                         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
                         linear_coupling_constraints_indexes = current_node.linear_coupling_constraints_indexes,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
@@ -849,7 +845,6 @@ function branchandbound_frob_matrixcomp(
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
-                        disjunctive_sorting = disjunctive_sorting,
                         add_basis_pursuit_valid_inequalities = false,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
                         Shor_constraints_indexes = current_node.Shor_constraints_indexes,
@@ -985,7 +980,6 @@ function branchandbound_frob_matrixcomp(
                     altmin_results_BB = @suppress alternating_minimization(
                         A, n, k, indices, γ, λ, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
-                        disjunctive_sorting = disjunctive_sorting,
                         U_initial = Matrix(U_rounded),
                         matrix_cuts = current_node.matrix_cuts,
                         time_limit = time_limit,
@@ -993,7 +987,6 @@ function branchandbound_frob_matrixcomp(
                 else
                     altmin_results_BB = @suppress alternating_minimization(
                         A, n, k, indices, γ, λ, use_disjunctive_cuts;
-                        disjunctive_sorting = false,
                         U_initial = Matrix(U_rounded),
                         U_lower = current_node.U_lower,
                         U_upper = current_node.U_upper,
@@ -1652,7 +1645,6 @@ function relax_frob_matrixcomp(
     ;
     branching_region::Union{String, Nothing} = nothing,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
-    disjunctive_sorting::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
     linear_coupling_constraints_indexes::Union{Vector, Nothing} = nothing,
     add_Shor_valid_inequalities::Bool = false,
@@ -1851,58 +1843,16 @@ function relax_frob_matrixcomp(
                     matrix_cut[l=1:L],
                     zero(AffExpr),
                 ) # stores the RHS of the linear inequality in U and Y
-                if (disjunctive_sorting && k > 1)
-                    @variable(model, v[1:L, 1:k]) # stores sorted version of each U[:,t]' * x[:,t]
-                    v̂ = zeros(L, k) # stores (sorted) fitted version of each Ű[:,t]' * x[:,t]
-                    @variable(model, r[1:L, 1:(k-1)]) # dual variables
-                    @variable(model, y[1:L, 1:(k-1), 1:k] ≥ 0) # dual variables
-                    @variable(model, w[1:L, 1:k]) # stores each U[:,t]' * x[:,t]
-                    @constraint(
-                        model,
-                        [l=1:L],
-                        sum(w[l,:]) == sum(v[l,:])
-                    )
-                    # dual linear program of: (
-                    # max sum(z[l,j] * w[l,j] for j in 1:k)
-                    # such that sum(z[l,j] for j in 1:k) ≤ q    [r]
-                    # and z[l,j] ≤ 1 for each j                 [y]
-                    # ) for each q, and for each cut l
-                    @constraint(
-                        model, 
-                        [l=1:L, q=1:(k-1)],
-                        sum(v[l,j] for j in 1:q) 
-                        == q * r[l,q] + sum(y[l,q,:])
-                    )
-                    @constraint(
-                        model,
-                        [l=1:L, q=1:(k-1), j=1:k],
-                        w[l,j] ≤ y[l,q,j] + r[l,q]
-                    )
-                    @constraint(
-                        model, 
-                        [l=1:L, i=1:(k-1)], 
-                        v[l,i] ≥ v[l,i+1]
-                    )
-                else
-                    @variable(model, v[1:L, 1:k]) # stores each U[:,t]' * x[:,t]
-                    v̂ = zeros(L, k) # stores fitted version: each Ű[:,t]' * x[:,t]
-                end
-
+                @variable(model, v[1:L, 1:k]) # stores each U[:,t]' * x[:,t]
+                v̂ = zeros(L, k) # stores fitted version: each Ű[:,t]' * x[:,t]
+                
                 # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
                 for (l, (breakpoint_vec, Û, _)) in enumerate(matrix_cuts)
-                    if (disjunctive_sorting && k > 1)
-                        @constraint(
-                            model, 
-                            w[l,:] .== U' * breakpoint_vec,
-                        )
-                        v̂[l,:] = sort(Û' * breakpoint_vec, rev=true)
-                    else
-                        @constraint(
-                            model, 
-                            v[l,:] .== U' * breakpoint_vec,
-                        )
-                        v̂[l,:] = Û' * breakpoint_vec
-                    end
+                    @constraint(
+                        model, 
+                        v[l,:] .== U' * breakpoint_vec,
+                    )
+                    v̂[l,:] = Û' * breakpoint_vec
                 end
                 
                 # Constraints linking v to breakpoints
@@ -2244,11 +2194,6 @@ function relax_frob_matrixcomp(
             && disjunctive_cuts_type in ["linear", "linear2", "linear3"]
         )
             results["v"] = value.(v)
-            if (disjunctive_sorting && k > 1)
-                results["r"] = value.(r)
-                results["y"] = value.(y)
-                results["w"] = value.(w)
-            end
         end
     elseif (
         JuMP.termination_status(model) in [
@@ -2284,7 +2229,6 @@ function alternating_minimization(
     use_disjunctive_cuts::Bool,
     ;
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
-    disjunctive_sorting::Bool = false,
     U_initial::Matrix{Float64},
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
@@ -2342,58 +2286,16 @@ function alternating_minimization(
         if length(matrix_cuts) > 0
             L = length(matrix_cuts)
             if disjunctive_cuts_type in ["linear", "linear2", "linear3"]
-                if (disjunctive_sorting && k > 1)
-                    @variable(model_U, v[1:L, 1:k]) # stores sorted version of each U[:,t]' * x[:,t]
-                    v̂ = zeros(L, k) # stores (sorted) fitted version of each Ű[:,t]' * x[:,t]
-                    @variable(model_U, r[1:L, 1:(k-1)]) # dual variables
-                    @variable(model_U, y[1:L, 1:(k-1), 1:k] ≥ 0) # dual variables
-                    @variable(model_U, w[1:L, 1:k]) # stores each U[:,t]' * x[:,t]
-                    @constraint(
-                        model_U,
-                        [l=1:L],
-                        sum(w[l,:]) == sum(v[l,:])
-                    )
-                    # dual linear program of: (
-                    # max sum(z[l,j] * w[l,j] for j in 1:k)
-                    # such that sum(z[l,j] for j in 1:k) ≤ q    [r]
-                    # and z[l,j] ≤ 1 for each j                 [y]
-                    # ) for each q, and for each cut l
-                    @constraint(
-                        model_U, 
-                        [l=1:L, q=1:(k-1)],
-                        sum(v[l,j] for j in 1:q) 
-                        == q * r[l,q] + sum(y[l,q,:])
-                    )
-                    @constraint(
-                        model_U,
-                        [l=1:L, q=1:(k-1), j=1:k],
-                        w[l,j] ≤ y[l,q,j] + r[l,q]
-                    )
-                    @constraint(
-                        model_U, 
-                        [l=1:L, i=1:(k-1)], 
-                        v[l,i] ≥ v[l,i+1]
-                    )
-                else
-                    @variable(model_U, v[1:L, 1:k]) # stores each U[:,t]' * x[:,t]
-                    v̂ = zeros(L, k) # stores fitted version: each Ű[:,t]' * x[:,t]
-                end
+                @variable(model_U, v[1:L, 1:k]) # stores each U[:,t]' * x[:,t]
+                v̂ = zeros(L, k) # stores fitted version: each Ű[:,t]' * x[:,t]
 
                 # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
                 for (l, (breakpoint_vec, Û, _)) in enumerate(matrix_cuts)
-                    if (disjunctive_sorting && k > 1)
-                        @constraint(
-                            model_U, 
-                            w[l,:] .== U' * breakpoint_vec,
-                        )
-                        v̂[l,:] = sort(Û' * breakpoint_vec, rev=true)
-                    else
-                        @constraint(
-                            model_U, 
-                            v[l,:] .== U' * breakpoint_vec,
-                        )
-                        v̂[l,:] = Û' * breakpoint_vec
-                    end
+                    @constraint(
+                        model_U, 
+                        v[l,:] .== U' * breakpoint_vec,
+                    )
+                    v̂[l,:] = Û' * breakpoint_vec
                 end
 
                 # Constraints linking v to breakpoints
