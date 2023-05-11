@@ -52,7 +52,6 @@ function branchandbound_frob_matrixcomp(
     use_disjunctive_cuts::Bool = true,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing, # either "smallest_1_eigvec" or "smallest_2_eigvec"
-    disjunctive_slices::Bool = false,
     disjunctive_sorting::Bool = false,
     presolve::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
@@ -284,7 +283,6 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
             Printf.@sprintf("Disjunctive cuts type:                          %15s\n", disjunctive_cuts_type),
             Printf.@sprintf("Disjunction breakpoints:                        %15s\n", disjunctive_cuts_breakpoints),
-            Printf.@sprintf("Use slices of Y?:                               %15s\n", disjunctive_slices),
             Printf.@sprintf("Apply disjunctive sorting?:                     %15s\n", disjunctive_sorting),
         ])
     end
@@ -424,7 +422,7 @@ function branchandbound_frob_matrixcomp(
         "use_disjunctive_cuts" => use_disjunctive_cuts,
         "disjunctive_cuts_type" => disjunctive_cuts_type,
         "disjunctive_cuts_breakpoints" => disjunctive_cuts_breakpoints,
-        "disjunctive_slices" => disjunctive_slices,
+        "disjunctive_slices" => false, # deprecated
         "disjunctive_sorting" => disjunctive_sorting,
         "presolve" => presolve,
         "add_basis_pursuit_valid_inequalities" => add_basis_pursuit_valid_inequalities,
@@ -516,7 +514,6 @@ function branchandbound_frob_matrixcomp(
             A, n, k, indices, γ, λ, use_disjunctive_cuts,
             ;
             disjunctive_cuts_type = disjunctive_cuts_type,
-            disjunctive_slices = disjunctive_slices,
             disjunctive_sorting = disjunctive_sorting,
             U_initial = altmin_U_initial,
             matrix_cuts = [],
@@ -839,7 +836,6 @@ function branchandbound_frob_matrixcomp(
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
-                        disjunctive_slices = disjunctive_slices,
                         disjunctive_sorting = disjunctive_sorting,
                         add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
                         linear_coupling_constraints_indexes = current_node.linear_coupling_constraints_indexes,
@@ -853,7 +849,6 @@ function branchandbound_frob_matrixcomp(
                     relax_result = @suppress relax_frob_matrixcomp(
                         n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
-                        disjunctive_slices = disjunctive_slices,
                         disjunctive_sorting = disjunctive_sorting,
                         add_basis_pursuit_valid_inequalities = false,
                         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
@@ -930,11 +925,7 @@ function branchandbound_frob_matrixcomp(
                 X_relax = relax_result["X"]
                 Θ_relax = relax_result["Θ"]
                 α_relax = relax_result["α"]
-                if disjunctive_slices && k > 1
-                    Y_slices_relax = relax_result["Yt"]
-                else
-                    Y_slices_relax = nothing
-                end
+                Y_slices_relax = nothing
                 if current_node.node_id == 1
                     lower = objective_relax
                 end
@@ -994,7 +985,6 @@ function branchandbound_frob_matrixcomp(
                     altmin_results_BB = @suppress alternating_minimization(
                         A, n, k, indices, γ, λ, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
-                        disjunctive_slices = disjunctive_slices,
                         disjunctive_sorting = disjunctive_sorting,
                         U_initial = Matrix(U_rounded),
                         matrix_cuts = current_node.matrix_cuts,
@@ -1082,7 +1072,6 @@ function branchandbound_frob_matrixcomp(
                     current_node,
                     disjunctive_cuts_type,
                     disjunctive_cuts_breakpoints,
-                    disjunctive_slices,
                     ;
                     Y = Y_relax, 
                     Y_slices = Y_slices_relax,
@@ -1663,7 +1652,6 @@ function relax_frob_matrixcomp(
     ;
     branching_region::Union{String, Nothing} = nothing,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
-    disjunctive_slices::Bool = false, # FIXME: incomplete
     disjunctive_sorting::Bool = false,
     add_basis_pursuit_valid_inequalities::Bool = false,
     linear_coupling_constraints_indexes::Union{Vector, Nothing} = nothing,
@@ -1755,29 +1743,14 @@ function relax_frob_matrixcomp(
     set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
     set_time_limit_sec(model, time_limit)
 
-    if (add_Shor_valid_inequalities || disjunctive_slices) && k > 1
+    if add_Shor_valid_inequalities && k > 1
         @variable(model, Xt[1:k, 1:n, 1:m])
         @expression(model, X[i=1:n, j=1:m], sum(Xt[:,i,j]))
     else
         @variable(model, X[1:n, 1:m])
     end
-    if disjunctive_slices && k > 1
-        Yt = Array{VariableRef, 3}(undef, (k, n, n))
-        for t in 1:k
-            Yt[t,:,:] = @variable(model, [1:n, 1:n], Symmetric, base_name = "Y$(t)")
-        end
-        model[:Yt] = Yt
-        @expression(model, Y[i=1:n, j=1:n], sum(Yt[:,i,j]))
-        Θt = Array{VariableRef, 3}(undef, (k, m, m))
-        for t in 1:k
-            Θt[t,:,:] = @variable(model, [1:m, 1:m], Symmetric, base_name = "Θ$(t)")
-        end
-        model[:Θt] = Θt
-        @expression(model, Θ[i=1:m, j=1:m], sum(Θt[:,i,j]))
-    else
-        @variable(model, Y[1:n, 1:n], Symmetric)
-        @variable(model, Θ[1:m, 1:m], Symmetric)
-    end
+    @variable(model, Y[1:n, 1:n], Symmetric)
+    @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
     if !use_disjunctive_cuts
         @variable(model, t[1:n, 1:k, 1:k])
@@ -1806,60 +1779,31 @@ function relax_frob_matrixcomp(
                 [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
             ])
         else
-            if disjunctive_slices
-                # Generate all Wt, H, V
-                @variable(model, Wt[
-                    1:k, 
-                    Iterators.product(1:n, 1:m),
-                ] ≥ 0)
-                @variable(model, H[
-                    [tuple(x...) for x in combinations(1:k, 2)], 
-                    Iterators.product(1:n, 1:m),
-                ])
-                @variable(model, V1[
-                    1:k, 
-                    1:n, 
-                    [tuple(x...) for x in combinations(1:m, 2)]
-                ])
-                @variable(model, V2[
-                    1:k, 
-                    [tuple(x...) for x in combinations(1:n, 2)], 
-                    1:m
-                ])
-                @variable(model, V3[
-                    1:k, 
-                    [tuple(x...) for x in combinations(1:n, 2)], 
-                    [tuple(x...) for x in combinations(1:m, 2)]
-                ])
-            else
-                # Generate only some Wt, H, V
-                @variable(model, Wt[
-                    1:k, 
-                    Shor_constraints_coords
-                ] ≥ 0)
-                @variable(model, H[
-                    [tuple(x...) for x in combinations(1:k, 2)], 
-                    Shor_constraints_coords
-                ])
-                @variable(model, V1[
-                    1:k, 
-                    Shor_constraints_coords_i, 
-                    [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
-                ])
-                @variable(model, V2[
-                    1:k, 
-                    [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
-                    Shor_constraints_coords_j
-                ])
-                @variable(model, V3[
-                    1:k, 
-                    [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
-                    [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
-                ])
-            end
+            # Generate only some Wt, H, V
+            @variable(model, Wt[
+                1:k, 
+                Shor_constraints_coords
+            ] ≥ 0)
+            @variable(model, H[
+                [tuple(x...) for x in combinations(1:k, 2)], 
+                Shor_constraints_coords
+            ])
+            @variable(model, V1[
+                1:k, 
+                Shor_constraints_coords_i, 
+                [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
+            ])
+            @variable(model, V2[
+                1:k, 
+                [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
+                Shor_constraints_coords_j
+            ])
+            @variable(model, V3[
+                1:k, 
+                [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
+                [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
+            ])
         end
-    elseif disjunctive_slices && k > 1
-        @variable(model, W[1:n, 1:m] ≥ 0)
     end
 
     # If noiseless, coupling constraints between X and A
@@ -1879,34 +1823,11 @@ function relax_frob_matrixcomp(
         end
     end
 
-    if disjunctive_slices && k > 1
-        @constraint(
-            model,
-            [t=1:k],
-            LinearAlgebra.Symmetric([Yt[t,:,:] Xt[t,:,:]; Xt[t,:,:]' Θt[t,:,:]]) in PSDCone()
-        )
-        @constraint(
-            model, 
-            [t=1:k],
-            LinearAlgebra.Symmetric([Yt[t,:,:] U[:,t]; U[:,t]' 1]) in PSDCone()
-        )
-        @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
-        # Trace constraint on slices of Y
-        @constraint(model, [t=1:k], sum(Yt[t,i,i] for i in 1:n) <= 1)
-        if !add_Shor_valid_inequalities
-            @constraint(
-                model, 
-                [i=1:n, j=1:m], 
-                [0.5, W[i,j], X[i,j]] in RotatedSecondOrderCone()
-            )
-        end
-    else
-        @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
-        @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
-        @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
-        # Trace constraint on Y
-        @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
-    end
+    @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
+    @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
+    @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
+    # Trace constraint on Y
+    @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
 
     # Lower bounds and upper bounds on U
     @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
@@ -1969,41 +1890,18 @@ function relax_frob_matrixcomp(
 
                 # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
                 for (l, (breakpoint_vec, Û, _)) in enumerate(matrix_cuts)
-                    if disjunctive_slices
-                        if (disjunctive_sorting && k > 1)
-                            @constraint(
-                                model, 
-                                [t=1:k],
-                                w[l,t] == U[:,t]' * breakpoint_vec[:,t],
-                            )
-                            for t in 1:k
-                                v̂[l,t] = Û[:,t]' * breakpoint_vec[:,t]
-                            end
-                            v̂[l,:] = sort(v̂[l,:], rev=true)
-                        else
-                            @constraint(
-                                model, 
-                                [t=1:k],
-                                v[l,t] == U[:,t]' * breakpoint_vec[:,t],
-                            )
-                            for t in 1:k
-                                v̂[l,t] = Û[:,t]' * breakpoint_vec[:,t]
-                            end
-                        end
+                    if (disjunctive_sorting && k > 1)
+                        @constraint(
+                            model, 
+                            w[l,:] .== U' * breakpoint_vec,
+                        )
+                        v̂[l,:] = sort(Û' * breakpoint_vec, rev=true)
                     else
-                        if (disjunctive_sorting && k > 1)
-                            @constraint(
-                                model, 
-                                w[l,:] .== U' * breakpoint_vec,
-                            )
-                            v̂[l,:] = sort(Û' * breakpoint_vec, rev=true)
-                        else
-                            @constraint(
-                                model, 
-                                v[l,:] .== U' * breakpoint_vec,
-                            )
-                            v̂[l,:] = Û' * breakpoint_vec
-                        end
+                        @constraint(
+                            model, 
+                            v[l,:] .== U' * breakpoint_vec,
+                        )
+                        v̂[l,:] = Û' * breakpoint_vec
                     end
                 end
                 
@@ -2064,28 +1962,15 @@ function relax_frob_matrixcomp(
                         end
                     end
                 end
-
-                if disjunctive_slices && k > 1
-                    for (l, (breakpoint_vec, _, _)) in enumerate(matrix_cuts)
-                        # individual constraints
-                        @constraint(
-                            model,
-                            [j=1:k],
-                            LinearAlgebra.dot(Yt[j,:,:], breakpoint_vec[:,j] * breakpoint_vec[:,j]')
-                            ≤ expressions[(l,j)] 
-                        )
+                for (l, (breakpoint_vec, _, _)) in enumerate(matrix_cuts)
+                    for j in 1:k
+                        add_to_expression!(matrix_cut[l], expressions[(l,j)])
                     end
-                else 
-                    for (l, (breakpoint_vec, _, _)) in enumerate(matrix_cuts)
-                        for j in 1:k
-                            add_to_expression!(matrix_cut[l], expressions[(l,j)])
-                        end
-                        # aggregated constraint
-                        @constraint(
-                            model,
-                            matrix_cut[l] ≥ LinearAlgebra.dot(Y, breakpoint_vec * breakpoint_vec'),
-                        )
-                    end
+                    # aggregated constraint
+                    @constraint(
+                        model,
+                        matrix_cut[l] ≥ LinearAlgebra.dot(Y, breakpoint_vec * breakpoint_vec'),
+                    )
                 end
             end
         end
@@ -2224,47 +2109,16 @@ function relax_frob_matrixcomp(
                 # McCormick constraints on Xt[t1,i,j], Xt[t2,i,j], H[t1,t2,i,j] here
                 # Question: what are the lower-bounds and upper-bounds on Xt meant to be?
             end
-            if disjunctive_slices
-                # Infiltrator.toggle_async_check(false)
-                # @infiltrate
-                @constraint(
-                    model,
-                    [t=1:k, (i, j) in Shor_SOC_constraints_indexes],
-                    [0.5, Wt[t,(i,j)], Xt[t,i,j]] in RotatedSecondOrderCone() 
-                )
-                @constraint(
-                    model, 
-                    [i=1:n, j=1:m], # for all indices
-                    W[i,j] == sum(Wt[:,(i,j)]) + 2 * sum(H[:,(i,j)])
-                )
-                # disaggregated version
-                @constraint(
-                    model,
-                    [t=1:k, j=1:m],
-                    Θt[t,j,j] == sum(Wt[t,(i,j)] for i in 1:n)
-                )
-                @constraint(
-                    model,
-                    [j=1:m, (t1, t2) in combinations(1:k, 2)],
-                    sum(H[(t1,t2),(i,j)] for i in 1:n) == 0
-                )
-                @constraint(
-                    model,
-                    [(i, j) in Shor_SOC_constraints_indexes, (t1, t2) in combinations(1:k, 2)],
-                    [0.5 * Wt[t1,(i,j)], Wt[t2,(i,j)], H[(t1,t2),(i,j)]] in RotatedSecondOrderCone()
-                )
-            else
-                @constraint(
-                    model, 
-                    [(i,j) in Shor_constraints_coords], 
-                    W[i,j] == sum(Wt[:,(i,j)]) + 2 * sum(H[:,(i,j)])
-                )
-                @constraint(
-                    model,
-                    [j=1:m],
-                    Θ[j,j] == sum(W[i,j] for i in 1:n)
-                )
-            end
+            @constraint(
+                model, 
+                [(i,j) in Shor_constraints_coords], 
+                W[i,j] == sum(Wt[:,(i,j)]) + 2 * sum(H[:,(i,j)])
+            )
+            @constraint(
+                model,
+                [j=1:m],
+                Θ[j,j] == sum(W[i,j] for i in 1:n)
+            )
             for (i1, i2, j1, j2) in Shor_constraints_indexes
                 @constraint(
                     model, 
@@ -2316,7 +2170,7 @@ function relax_frob_matrixcomp(
             + λ * sum(Y[i, i] for i = 1:n)
         )
     else
-        if add_Shor_valid_inequalities || (disjunctive_slices && k > 1)
+        if add_Shor_valid_inequalities
             @objective(
                 model,
                 Min,
@@ -2384,11 +2238,6 @@ function relax_frob_matrixcomp(
                 results["H"] = value.(H)
             end
         end
-        if disjunctive_slices && k > 1
-            results["Yt"] = value.(Yt)
-            results["Θt"] = value.(Θt)
-            results["Xt"] = value.(Xt)
-        end
         if (
             use_disjunctive_cuts 
             && length(matrix_cuts) > 0
@@ -2435,7 +2284,6 @@ function alternating_minimization(
     use_disjunctive_cuts::Bool,
     ;
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
-    disjunctive_slices::Bool = false,
     disjunctive_sorting::Bool = false,
     U_initial::Matrix{Float64},
     U_lower::Array{Float64,2} = begin
@@ -2533,41 +2381,18 @@ function alternating_minimization(
 
                 # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
                 for (l, (breakpoint_vec, Û, _)) in enumerate(matrix_cuts)
-                    if disjunctive_slices 
-                        if (disjunctive_sorting && k > 1)
-                            @constraint(
-                                model_U, 
-                                [t=1:k],
-                                w[l,t] == U[:,t]' * breakpoint_vec[:,t],
-                            )
-                            for t in 1:k
-                                v̂[l,t] = Û[:,t]' * breakpoint_vec[:,t]
-                            end
-                            v̂[l,:] = sort(v̂[l,:], rev=true)
-                        else
-                            @constraint(
-                                model_U, 
-                                [t=1:k],
-                                v[l,t] == U[:,t]' * breakpoint_vec[:,t],
-                            )
-                            for t in 1:k
-                                v̂[l,t] = Û[:,t]' * breakpoint_vec[:,t]
-                            end
-                        end
+                    if (disjunctive_sorting && k > 1)
+                        @constraint(
+                            model_U, 
+                            w[l,:] .== U' * breakpoint_vec,
+                        )
+                        v̂[l,:] = sort(Û' * breakpoint_vec, rev=true)
                     else
-                        if (disjunctive_sorting && k > 1)
-                            @constraint(
-                                model_U, 
-                                w[l,:] .== U' * breakpoint_vec,
-                            )
-                            v̂[l,:] = sort(Û' * breakpoint_vec, rev=true)
-                        else
-                            @constraint(
-                                model_U, 
-                                v[l,:] .== U' * breakpoint_vec,
-                            )
-                            v̂[l,:] = Û' * breakpoint_vec
-                        end
+                        @constraint(
+                            model_U, 
+                            v[l,:] .== U' * breakpoint_vec,
+                        )
+                        v̂[l,:] = Û' * breakpoint_vec
                     end
                 end
 
@@ -3257,7 +3082,6 @@ function create_matrix_cut_child_nodes(
     node::BBNode,
     disjunctive_cuts_type::String,
     disjunctive_cuts_breakpoints::String,
-    disjunctive_slices::Bool,
     ;
     Y::Union{Matrix{Float64}, Nothing} = nothing,
     Y_slices::Union{Array{Float64, 3}, Nothing} = nothing,
@@ -3308,30 +3132,16 @@ function create_matrix_cut_child_nodes(
     (n, k) = size(U)
     (n, m) = size(X)
     
-    if disjunctive_slices
-        if disjunctive_cuts_breakpoints == "smallest_1_eigvec"
-            breakpoint_vec = zeros(n, k)
-            for t in 1:k
-                eigvals, eigvecs, _ = eigs(Symmetric(U[:,t] * U[:,t]' - Y_slices[t,:,:]), nev=1, which=:SR, tol=1e-6)
-                breakpoint_vec[:,t] = eigvecs[:,1]
-            end
-        elseif disjunctive_cuts_breakpoints == "smallest_2_eigvec"
-            error("""
-            `smallest_2_eigvec` not yet implemented for `disjunctive_slices=true`.
-            """)
-        end
-    else
-        if disjunctive_cuts_breakpoints == "smallest_1_eigvec"
-            eigvals, eigvecs, _ = eigs(Symmetric(U * U' - Y), nev=1, which=:SR, tol=1e-6)
+    if disjunctive_cuts_breakpoints == "smallest_1_eigvec"
+        eigvals, eigvecs, _ = eigs(Symmetric(U * U' - Y), nev=1, which=:SR, tol=1e-6)
+        breakpoint_vec = eigvecs[:,1]
+    elseif disjunctive_cuts_breakpoints == "smallest_2_eigvec"
+        eigvals, eigvecs, _ = eigs(Symmetric(U * U' - Y), nev=2, which=:SR, tol=1e-6)
+        if eigvals[2] < -1e-10
+            weights = abs.(eigvals[1:2]) ./ sqrt(sum(eigvals[1:2].^2))
+            breakpoint_vec = weights[1] * eigvecs[:,1] + weights[2] * eigvecs[:,2]
+        else
             breakpoint_vec = eigvecs[:,1]
-        elseif disjunctive_cuts_breakpoints == "smallest_2_eigvec"
-            eigvals, eigvecs, _ = eigs(Symmetric(U * U' - Y), nev=2, which=:SR, tol=1e-6)
-            if eigvals[2] < -1e-10
-                weights = abs.(eigvals[1:2]) ./ sqrt(sum(eigvals[1:2].^2))
-                breakpoint_vec = weights[1] * eigvecs[:,1] + weights[2] * eigvecs[:,2]
-            else
-                breakpoint_vec = eigvecs[:,1]
-            end
         end
     end
 

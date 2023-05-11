@@ -19,7 +19,6 @@ function test_matrix_completion_disjunctivecuts(
     bestfirst_depthfirst_cutoff::Int = 10000,
     disjunctive_cuts_type::Union{String, Nothing} = "linear",
     disjunctive_cuts_breakpoints::Union{String, Nothing} = "smallest_1_eigvec",
-    disjunctive_slices::Bool = false,
     disjunctive_sorting::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities_fraction::Float64 = 1.0,
@@ -59,7 +58,6 @@ function test_matrix_completion_disjunctivecuts(
         use_disjunctive_cuts = true,
         disjunctive_cuts_type = disjunctive_cuts_type,
         disjunctive_cuts_breakpoints = disjunctive_cuts_breakpoints,
-        disjunctive_slices = disjunctive_slices,
         disjunctive_sorting = disjunctive_sorting,
         presolve = false, # does not apply in noisy case
         add_Shor_valid_inequalities = add_Shor_valid_inequalities,
