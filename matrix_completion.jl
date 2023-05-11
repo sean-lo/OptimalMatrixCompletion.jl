@@ -115,10 +115,10 @@ function branchandbound_frob_matrixcomp(
     end
 
     if use_disjunctive_cuts
-        if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
+        if !(disjunctive_cuts_type in ["linear", "linear2", "linear3"])
             error("""
             Invalid input for disjunctive cuts type.
-            Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
+            Disjunctive cuts type must be either "linear" or "linear2" or "linear3";
             $disjunctive_cuts_type supplied instead.
             """)
         end
@@ -1709,10 +1709,10 @@ function relax_frob_matrixcomp(
     end
 
     if use_disjunctive_cuts
-        if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
+        if !(disjunctive_cuts_type in ["linear", "linear2", "linear3"])
             error("""
             Invalid input for disjunctive cuts type.
-            Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
+            Disjunctive cuts type must be either "linear" or "linear2" or "linear3";
             $disjunctive_cuts_type supplied instead.
             """)
         end
@@ -2086,37 +2086,6 @@ function relax_frob_matrixcomp(
                             matrix_cut[l] ≥ LinearAlgebra.dot(Y, breakpoint_vec * breakpoint_vec'),
                         )
                     end
-                end
-
-            elseif disjunctive_cuts_type == "linear_all"
-                for (breakpoint_vec, Û, basis) in matrix_cuts
-                    # polyhedral constraints on U
-                    @constraint(
-                        model,
-                        # requires Polyhedra package
-                        (U' * breakpoint_vec) in polyhedron(vrep(
-                            sqrt(k) .* hcat(
-                                Û' * breakpoint_vec, 
-                                basis
-                            )'
-                        ))
-                    )
-                    # linear constraint involving U and Y
-                    @constraint(
-                        model,
-                        LinearAlgebra.dot(Y, breakpoint_vec * breakpoint_vec')
-                        ≤ LinearAlgebra.dot(      
-                            k .* [
-                                sum((Û' * breakpoint_vec).^2), 
-                                repeat([1.0], k)...
-                            ],
-                            inv(vcat(
-                                sqrt(k) .* hcat(Û' * breakpoint_vec, basis),
-                                ones(1, k+1)
-                            ))
-                            * vcat((U' * breakpoint_vec), [1])
-                        )
-                    )
                 end
             end
         end
@@ -2648,20 +2617,6 @@ function alternating_minimization(
                             end
                         end
                     end
-                end
-            elseif disjunctive_cuts_type == "linear_all"
-                for (breakpoint_vec, Û, basis) in matrix_cuts
-                    # polyhedral constraints on U
-                    @constraint(
-                        model_U,
-                        # requires Polyhedra package
-                        (U' * breakpoint_vec) in polyhedron(vrep(
-                            sqrt(k) .* hcat(
-                                Û' * breakpoint_vec, 
-                                basis
-                            )'
-                        ))
-                    )
                 end
             end
         end
@@ -3324,18 +3279,11 @@ function create_matrix_cut_child_nodes(
     # directions: (k,) vector of elements from {"left", "middle", "right"}
     # OR 3. (if disjunctive_cuts_type == "linear3")
     # directions: (k,) vector of elements from {"left", "inner_left", "inner_right", "right"}
-    # OR 3. (if disjunctive_cuts_type == "linear_all")
-    # basis: (k, k) diagonal matrix with on-diagonal entries in {-1, 1} 
-    if !(disjunctive_cuts_type in ["linear", "linear2", "linear3", "linear_all"])
+    if !(disjunctive_cuts_type in ["linear", "linear2", "linear3"])
         error("""
         Invalid input for disjunctive cuts type.
-        Disjunctive cuts type must be either "linear" or "linear2" or "linear3" or "linear_all";
+        Disjunctive cuts type must be either "linear" or "linear2" or "linear3";
         $disjunctive_cuts_type supplied instead.
-        """)
-    end
-    if disjunctive_slices && disjunctive_cuts_type == "linear_all"
-        error("""
-        `disjunctive_cuts_type = linear_all` not supported with `disjunctive_slices = true`.
         """)
     end
     if !(disjunctive_cuts_breakpoints in ["smallest_1_eigvec", "smallest_2_eigvec"])
@@ -3444,19 +3392,6 @@ function create_matrix_cut_child_nodes(
                 Shor_SOC_constraints_indexes = Shor_SOC_constraints_indexes,
             )
             for (ind, directions) in directions_list
-        )
-    elseif disjunctive_cuts_type in ["linear_all"]
-        return (
-            BBNode(
-                U_lower = node.U_lower,
-                U_upper = node.U_upper,
-                matrix_cuts = vcat(node.matrix_cuts, [(breakpoint_vec, U, diagm(collect(s)))]),
-                LB = objective_relax,
-                depth = node.depth + 1,
-                node_id = counter + ind, 
-                parent_id = node.node_id,
-            )
-            for (ind, s) in enumerate(Iterators.product(repeat([[1,-1]], k)...))
         )
     end
 end
