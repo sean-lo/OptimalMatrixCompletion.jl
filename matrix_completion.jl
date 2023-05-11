@@ -35,6 +35,68 @@ using Polyhedra
     master_feasible::Bool = false
 end
 
+"""
+    branchandbound_frob_matrixcomp(
+        k::Int,
+        A::Array{Float64, 2},
+        indices::BitMatrix,
+        γ::Float64,
+        λ::Float64,
+        noise::Bool,
+        ;
+        <keyword arguments>
+    )
+
+Complete matrix `A` with observed indices in `indices` with rank-`k` matrix `X`.
+
+In the noisy case (`noise == true`), solves (with regularization parameter `γ`):
+```math
+\\min_{\\mathbf{X}}
+\\frac{1}{2} \\sum_{(i,j) \\in \\mathcal{I}} (X_{i,j} - A_{i,j})^2 
++ \\frac{1}{2 \\gamma} \\\|\\mathbf{X}\\\|_F^2
+\\quad 
+\\text{s.t. } \\text{Rank}(\\mathbf{X}) \\leq k
+```
+In the noiseless case (`noise == false`), solves:
+
+```math
+\\min_{\\mathbf{X}}
+\\\|\\mathbf{X}\\\|_F^2
+\\quad 
+\\text{s.t. } X_{i,j} = A_{i,j} \\ \\forall (i,j) \\in \\mathcal{I}, 
+\\ \\text{Rank}(\\mathbf{X}) \\leq k
+```
+
+# Arguments
+- `branching_region::Union{String, Nothing} = nothing`: in the situation with `use_disjunctive_cuts = false`, the region of branching to use; either "box" or "angular" or "polyhedral" or "hybrid";
+- `branching_type::Union{String, Nothing} = nothing`: in the situation with `use_disjunctive_cuts = false`, determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient";
+- `branch_point::Union{String, Nothing} = nothing`: in the situation with `use_disjunctive_cuts = false`, determine which value to branch on: either "midpoint" or "current_point"
+- `node_selection::String = "breadthfirst"`: the node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst";
+- `bestfirst_depthfirst_cutoff::Int = 10000`: in the situation with `node_selection = "bestfirst_depthfirst"`, the number of nodes in the queue before the algorithm switches from `"bestfirst"` to `"depthfirst"`;
+- `gap::Float64 = 1e-4`: relative optimality gap for branch-and-bound algorithm;
+- `use_disjunctive_cuts::Bool = true`: whether to use eigenvector disjunctions, highly recommended to be `true`;
+- `disjunctive_cuts_type::Union{String, Nothing} = nothing`: number of pieces in piecewise linear upper-approximation; either "linear" (2 pieces) or "linear2" (3 pieces) or "linear3" (4 pieces);
+- `disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing`: number of eigenvectors to use in constructing separation oracle, either "smallest_1_eigvec" (most negative eigenvector) or "smallest_2_eigvec" (combination of first and second most negative eigenvectors);
+- `presolve::Bool = false`: in the noiseless setting (`noise = false`), whether to perform presolve, highly recommended to be `true`;
+- `add_basis_pursuit_valid_inequalities::Bool = false`: in the noiseless setting (`noise = false`), whether to impose valid inequalities from determinant minors;
+- `add_Shor_valid_inequalities::Bool = false`: whether to add Shor SDP inequalities to strengthen SDP relaxation at each node;
+- `Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1, 2, 3, 4]`: if `add_Shor_valid_inequalities` is true, the set of 2-by-2 determinant minors to model with Shor SDP inequalities, based on the number of filled entries (should be some subset of `[1, 2, 3, 4]`);
+- `add_Shor_valid_inequalities_fraction::Float64 = 1.0`: if `add_Shor_valid_inequalities` is true, the proportion of 2-by-2 determinant minors to model with Shor SDP inequalities;
+- `add_Shor_valid_inequalities_iterative::Bool = false`: if `add_Shor_valid_inequalities` is true, whether to add them iteratively from parent node to child node;
+- `max_update_Shor_indices_probability::Float64 = 1.0`: if `add_Shor_valid_inequalities_iterative` is true, the maximum probability of adding inequalities at a node;
+- `min_update_Shor_indices_probability::Float64 = 0.1`, if `add_Shor_valid_inequalities_iterative` is true, the minimum probability of adding inequalities at a node;
+- `update_Shor_indices_probability_decay_rate::Float64 = 1.1`: if `add_Shor_valid_inequalities_iterative` is true, the base of the exponential decay of the probability of adding inequalities at a node, as a function of depth in the tree;
+- `update_Shor_indices_n_minors::Int = 100`: if `add_Shor_valid_inequalities_iterative` is true, the number of Shor SDP inequalities to add at a node whenever adding is performed;
+- `root_only::Bool = false`: if true, only solves relaxation at root node
+- `altmin_flag::Bool = true`: whether to perform alternating minimization at nodes in the branch-and-bound tree, highly recommended to be `true`;
+- `max_altmin_probability::Float64 = 1.0`: if `altmin_flag` is true, the maximum probability of performing alternating minimization at a node;
+- `min_altmin_probability::Float64 = 0.005`: if `altmin_flag` is true, the minimum probability of performing alternating minimization at a node;
+- `altmin_probability_decay_rate::Float64 = 1.1`: if `altmin_flag` is true, the base of the exponential decay of the probability of performing alternating minimization at a node, as a function of depth in the tree;
+- `use_max_steps::Bool = false`: whether to terminate the algorithm based on the number of branch-and-bound nodes explored;
+- `max_steps::Int = 1000000`: if `use_max_steps` is true, the upper limit on number of branch-and-bound nodes explored;
+- `time_limit::Int = 3600`: time limit in seconds
+- `update_step::Int = 1000`: number of branch-and-bound nodes explored per printed update
+"""
 function branchandbound_frob_matrixcomp(
     k::Int,
     A::Array{Float64,2}, # This is a rank-k matrix (optionally, with noise)
@@ -58,9 +120,9 @@ function branchandbound_frob_matrixcomp(
     Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1, 2, 3, 4],
     add_Shor_valid_inequalities_fraction::Float64 = 1.0,
     add_Shor_valid_inequalities_iterative::Bool = false,
-    max_update_Shor_indices_probability::Float64 = 1.0, # TODO
-    min_update_Shor_indices_probability::Float64 = 0.1, # TODO
-    update_Shor_indices_probability_decay_rate::Float64 = 1.1, # TODO
+    max_update_Shor_indices_probability::Float64 = 1.0,
+    min_update_Shor_indices_probability::Float64 = 0.1,
+    update_Shor_indices_probability_decay_rate::Float64 = 1.1,
     update_Shor_indices_n_minors::Int = 100,
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
@@ -642,7 +704,6 @@ function branchandbound_frob_matrixcomp(
     if (add_Shor_valid_inequalities && !add_Shor_valid_inequalities_iterative)
         if !noise
             # Assuming presolve is done:
-            # TODO: decide what happens when we don't implement presolve
             initial_node.Shor_constraints_indexes = generate_rank1_basis_pursuit_Shor_constraints_indexes(indices_presolved, 1)
             initial_node.Shor_constraints_indexes = randsubseq(
                 initial_node.Shor_constraints_indexes,
@@ -689,9 +750,9 @@ function branchandbound_frob_matrixcomp(
         requires `add_Shor_valid_inequalities` to be `true`.
         """)
     else
-        initial_node.Shor_constraints_indexes = [] # TODO
-        Shor_non_SOC_constraints_indexes = [] # TODO
-        initial_node.Shor_SOC_constraints_indexes = [] # TODO
+        initial_node.Shor_constraints_indexes = []
+        Shor_non_SOC_constraints_indexes = []
+        initial_node.Shor_SOC_constraints_indexes = []
     end
 
     nodes[1] = initial_node
@@ -1440,6 +1501,21 @@ function branchandbound_frob_matrixcomp(
     return solution, printlist, instance
 end
 
+"""
+    master_problem_frob_matrixcomp_feasible(
+        Y::Matrix{Float64}, 
+        U::Matrix{Float64}, 
+        X::Matrix{Float64}, 
+        Θ::Matrix{Float64}, 
+        use_disjunctive_cuts::Bool,
+        ;
+        orthogonality_tolerance::Float64 = 0.0,
+        projection_tolerance::Float64 = 1e-6,
+        lifted_variable_tolerance::Float64 = 1e-6,
+    )
+
+Determine if `(Y, U, X, Θ)` is feasible for the master problem.
+"""
 function master_problem_frob_matrixcomp_feasible(
     Y::Matrix{Float64}, 
     U::Matrix{Float64}, 
@@ -2028,15 +2104,6 @@ function relax_frob_matrixcomp(
                 [j=1:m],
                 Θ[j,j] == sum(W[i,j] for i in 1:n)
             )
-            # FIXME
-            # Infiltrator.toggle_async_check(false)
-            # @infiltrate
-            # for (j1, j2) in combinations(Shor_constraints_coords_j, 2)
-            #     @constraint(
-            #         model,
-            #         Θ[j1,j2] == sum(V1[i,(j1,j2)] for i in 1:n)
-            #     )
-            # end
             for (i1, i2, j1, j2) in Shor_constraints_indexes
                 @constraint(
                     model, 
@@ -2055,9 +2122,6 @@ function relax_frob_matrixcomp(
                     model,
                     [0.5, W[i,j], X[i,j]] in RotatedSecondOrderCone() 
                 )
-                # FIXME
-                # McCormick constraints on Xt[t1,i,j], Xt[t2,i,j], H[t1,t2,i,j] here
-                # Question: what are the lower-bounds and upper-bounds on Xt meant to be?
             end
             @constraint(
                 model, 
@@ -2565,8 +2629,25 @@ function evaluate_objective(
     end
 end
 
-function compute_MSE(X, A, indices; kind = "out")
-    """Computes MSE of entries in `X` and `A` that are not in `indices`."""
+"""
+    compute_MSE(
+        X, 
+        A, 
+        indices; 
+        kind = "out"
+    )
+
+Computes mean-squared error of entries in `X` and `A` based on `indices`.
+
+If `kind == "out"`, computes out-of-sample MSE. If `kind == "in"`, computes in-sample MSE. If `kind == "all"`, computes overall MSE.
+"""
+function compute_MSE(
+    X, 
+    A, 
+    indices
+    ; 
+    kind = "out"
+)
     if kind == "out"
         if length(indices) == sum(indices)
             return 0.0
