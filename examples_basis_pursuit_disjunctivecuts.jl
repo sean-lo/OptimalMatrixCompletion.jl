@@ -1,4 +1,6 @@
 include("test_basis_pursuit_disjunctivecuts.jl")
+include("matrix_completion.jl")
+include("utils.jl")
 
 using .TestBasisPursuitDisjunctiveCuts
 using Plots
@@ -545,3 +547,59 @@ unstack(
     :n, 
     :time_taken_mean,
 ) 
+
+# Experiment 5: rank-k presolve
+n = 20
+k = 2
+num_entries = Int(round(2 * k * n * log10(n)))
+seed = 2
+
+r_5_1ff = test_basis_pursuit_disjunctivecuts(
+    k, n, n, num_entries, seed;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    presolve = true,
+    add_basis_pursuit_valid_inequalities = false,
+    add_Shor_valid_inequalities = false,
+    time_limit = 60,
+    use_max_steps = false,
+);
+r_5_1tf = test_basis_pursuit_disjunctivecuts(
+    k, n, n, num_entries, seed;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    presolve = true,
+    add_basis_pursuit_valid_inequalities = true,
+    add_Shor_valid_inequalities = false,
+    time_limit = 60,
+    use_max_steps = false,
+);
+r_5_1tt = test_basis_pursuit_disjunctivecuts(
+    k, n, n, num_entries, seed;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    presolve = true,
+    add_basis_pursuit_valid_inequalities = true,
+    add_Shor_valid_inequalities = true,
+    time_limit = 60,
+    use_max_steps = false,
+);
+
+# bp1_root debug
+
+d = @timed test_basis_pursuit_disjunctivecuts(
+    1, 50, 50, Int(ceil(2.0 * 1 * 50)), 13;
+    node_selection = "bestfirst",
+    disjunctive_cuts_type = "linear",
+    disjunctive_cuts_breakpoints = "smallest_1_eigvec",
+    presolve = true,
+    add_basis_pursuit_valid_inequalities = true,
+    add_Shor_valid_inequalities = false,
+    root_only = false,
+    time_limit = 120, 
+    use_max_steps = false,
+)
+Base.summarysize(d.value)

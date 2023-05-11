@@ -220,9 +220,7 @@ noise = 0.1
 use_disjunctive_cuts = false
 node_selection = "depthfirst"
 altmin_flag = true
-seeds = [7, 10, 18, 19]
-
-seed = seeds[1]
+seed = 7
 num_indices = Int(round(p * n * log10(n)))
 time_limit = 200
 
