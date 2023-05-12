@@ -24,12 +24,12 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Suppressor = "fd094767-a336-5f1f-9728-57cf17d0bbfb"
 
 [compat]
-julia = "1.7"
 Arpack = "0.5"
 Combinatorics = "1.0"
 Compat = "4.6"
 DataFrames = "1.5"
 DataStructures = "0.18"
+Infiltrator = "1"
 JuMP = "1.11"
 MathOptInterface = "1.15"
 Mosek = "10.0"
@@ -38,6 +38,7 @@ OrderedCollections = "1.6"
 Parameters = "0.12"
 Polyhedra = "0.7"
 Suppressor = "0.2"
+julia = "1.7"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
