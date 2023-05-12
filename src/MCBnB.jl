@@ -40,7 +40,7 @@ export BBNode
     master_feasible::Bool = false
 end
 
-"""
+@doc raw"""
     branchandbound_frob_matrixcomp(
         k::Int,
         A::Array{Float64, 2},
@@ -56,20 +56,20 @@ Complete matrix `A` with observed indices in `indices` with rank-`k` matrix `X`.
 
 In the noisy case (`noise == true`), solves (with regularization parameter `γ`):
 ```math
-\\min_{\\mathbf{X}}
-\\frac{1}{2} \\sum_{(i,j) \\in \\mathcal{I}} (X_{i,j} - A_{i,j})^2 
-+ \\frac{1}{2 \\gamma} \\\|\\mathbf{X}\\\|_F^2
-\\quad 
-\\text{s.t. } \\text{Rank}(\\mathbf{X}) \\leq k
+\min_{\mathbf{X}}
+\frac{1}{2} \sum_{(i,j) \in \mathcal{I}} (X_{i,j} - A_{i,j})^2 
++ \frac{1}{2 \gamma} \|\mathbf{X}\|_F^2
+\quad 
+\text{s.t. } \text{Rank}(\mathbf{X}) \leq k
 ```
 In the noiseless case (`noise == false`), solves:
 
 ```math
-\\min_{\\mathbf{X}}
-\\\|\\mathbf{X}\\\|_F^2
-\\quad 
-\\text{s.t. } X_{i,j} = A_{i,j} \\ \\forall (i,j) \\in \\mathcal{I}, 
-\\ \\text{Rank}(\\mathbf{X}) \\leq k
+\min_{\mathbf{X}}
+\|\mathbf{X}\|_F^2
+\quad 
+\text{s.t. } X_{i,j} = A_{i,j} \ \forall (i,j) \in \mathcal{I}, 
+\ \text{Rank}(\mathbf{X}) \leq k
 ```
 
 # Arguments
@@ -101,6 +101,7 @@ In the noiseless case (`noise == false`), solves:
 - `max_steps::Int = 1000000`: if `use_max_steps` is true, the upper limit on number of branch-and-bound nodes explored;
 - `time_limit::Int = 3600`: time limit in seconds
 - `update_step::Int = 1000`: number of branch-and-bound nodes explored per printed update
+
 """
 function branchandbound_frob_matrixcomp(
     k::Int,

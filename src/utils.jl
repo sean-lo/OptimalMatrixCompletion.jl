@@ -4,7 +4,6 @@ using Compat
 
 using JuMP
 using MathOptInterface
-using Gurobi
 using Mosek
 using MosekTools
 
