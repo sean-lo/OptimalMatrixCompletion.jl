@@ -1,6 +1,6 @@
-# Matrix Completion Branch-and-Bound
+# Optimal Low-Rank Matrix Completion via Branch-and-bound
 
-`MCBnB` is a Julia package which solves low-rank matrix completion problems exactly via a custom branch-and-bound scheme. It is the implementation of the following paper: []().
+`OptimalMatrixCompletion` is a Julia package which solves low-rank matrix completion problems to certifiable optimality via a custom branch-and-bound scheme. It is the implementation of the following paper: []().
 
 If you use this in your work, please cite this paper as follows:
     
@@ -10,16 +10,16 @@ If you use this in your work, please cite this paper as follows:
 
 To install the package:
 
-    julia> Pkg.install("MCBnB")
+    julia> Pkg.install("OptimalMatrixCompletion")
 
 To perform matrix completion on the matrix `A` with observed indices `indices`:
 
-    julia> using MCBnB
+    julia> using OptimalMatrixCompletion
     julia> (k, m, n) = (1, 50, 50);
     julia> A = randn(Float64, (m, n)); indices = BitMatrix(rand([0,1], (m, n)));
     julia> (γ, λ) = (80.0, 0.0);
     julia> noise = true;
-    julia> (solution, printlist, instance) = MCBnB.branchandbound_frob_matrixcomp(
+    julia> (solution, printlist, instance) = OptimalMatrixCompletion.branchandbound_frob_matrixcomp(
         k, A, indices, γ, λ, noise,
         ;
         node_selection = "bestfirst",
