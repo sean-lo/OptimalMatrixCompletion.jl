@@ -1,7 +1,7 @@
 name = "MCBnB"
 uuid = "76cf53e1-3225-456b-b3a5-c28cc3b7f344"
 authors = ["Sean Lo"]
-version = "1.0.0-DEV"
+version = "0.1.0"
 
 [deps]
 Arpack = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
