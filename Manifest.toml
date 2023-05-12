@@ -191,12 +191,6 @@ git-tree-sha1 = "659140c9375afa2f685e37c1a0b9c9a60ef56b40"
 uuid = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
 version = "0.4.7"
 
-[[deps.Infiltrator]]
-deps = ["InteractiveUtils", "Markdown", "REPL", "UUIDs"]
-git-tree-sha1 = "6e48065ac352c8c9616013faa419b0ea65bb6455"
-uuid = "5903a43b-9cc3-4c30-8d17-598619ec4e9b"
-version = "1.6.3"
-
 [[deps.InlineStrings]]
 deps = ["Parsers"]
 git-tree-sha1 = "9cc2baf75c6d09f9da536ddf58eb2f29dedaf461"

@@ -12,7 +12,6 @@ using OrderedCollections
 using DataStructures
 using Parameters
 using Combinatorics
-using Infiltrator
 
 using JuMP
 using MathOptInterface
@@ -999,7 +998,6 @@ function branchandbound_frob_matrixcomp(
             end
         end
 
-        # @infiltrate
         # if solution for relax_result is feasible for original problem:
         # prune this node;
         # if it is the best found so far, update solution
