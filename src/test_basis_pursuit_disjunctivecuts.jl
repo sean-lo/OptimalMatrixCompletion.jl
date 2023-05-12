@@ -1,9 +1,9 @@
 module TestBasisPursuitDisjunctiveCuts
 
-include("MCBnB.jl")
+include("OptimalMatrixCompletion.jl")
 include("utils.jl")
 
-using .MCBnB
+using .OptimalMatrixCompletion
 
 export test_basis_pursuit_disjunctivecuts
 
@@ -87,7 +87,7 @@ end
 
 module TestBasisPursuitNonDisjunctiveCuts
 
-include("MCBnB.jl")
+include("OptimalMatrixCompletion.jl")
 include("utils.jl")
 
 export test_basis_pursuit_nondisjunctivecuts

@@ -1,4 +1,4 @@
-module MCBnB
+module OptimalMatrixCompletion
 
 using LinearAlgebra
 using Arpack
