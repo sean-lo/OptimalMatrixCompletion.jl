@@ -1,6 +1,6 @@
 # Optimal Low-Rank Matrix Completion via Branch-and-bound
 
-`OptimalMatrixCompletion` is a Julia package which solves low-rank matrix completion problems to certifiable optimality via a custom branch-and-bound scheme. It is the implementation of the following paper: []().
+`OptimalMatrixCompletion` is a Julia package which solves low-rank matrix completion problems to certifiable optimality via a custom branch-and-bound scheme. It is the implementation of the following paper: [Optimal Low-Rank Matrix Completion: Semidefinite Relaxations and Eigenvector Disjunctions](https://optimization-online.org/2023/05/optimal-low-rank-matrix-completion-semidefinite-relaxations-and-eigenvector-disjunctions/).
 
 If you use this in your work, please cite this paper as follows:
     
