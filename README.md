@@ -4,14 +4,14 @@
 
 If you use this in your work, please cite this paper as follows:
     
-    # @unknown{unknown,
-    # author = {Bertsimas, Dimitris and Cory-Wright, Ryan and Lo, Sean and Pauphilet, Jean},
-    # year = {2023},
-    # month = {05},
-    # pages = {},
-    # title = {Optimal Low-Rank Matrix Completion: Semidefinite Relaxations and Eigenvector Disjunctions},
-    # doi = {10.13140/RG.2.2.20630.11841}
-    # }
+    @article{bertsimas2023optimal,
+        author = {Bertsimas, Dimitris and Cory-Wright, Ryan and Lo, Sean and Pauphilet, Jean},
+        year = {2023},
+        month = {05},
+        pages = {},
+        title = {Optimal Low-Rank Matrix Completion: Semidefinite Relaxations and Eigenvector Disjunctions},
+        doi = {10.13140/RG.2.2.20630.11841}
+    }
 
 ## Quick start
 
