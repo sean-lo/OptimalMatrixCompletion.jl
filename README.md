@@ -66,7 +66,6 @@ Here, `solution` is a dictionary with the following fields:
 
 See below for a full list of optional paramters.
 
-- `branching_region::Union{String, Nothing} = nothing`: in the situation with `use_disjunctive_cuts = false`, the region of branching to use; either "box" or `"angular" or "polyhedral" or "hybrid". Typically "box" is used, which implements McCormick branching on the entries of the lifted variable $U$.
 - `branching_type::Union{String, Nothing} = nothing`: in the situation with `use_disjunctive_cuts = false`, determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient".
 - `branch_point::Union{String, Nothing} = nothing`: in the situation with `use_disjunctive_cuts = false`, determine which value to branch on: either "midpoint" or "current_point".
 - `node_selection::String = "breadthfirst"`: the node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst".
