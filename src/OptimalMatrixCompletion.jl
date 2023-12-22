@@ -172,7 +172,7 @@ function branchandbound_frob_matrixcomp(
         else
             message *= "\n"
         end
-        add_message!(printlist, [message])
+        add_message!(printlist, String[message])
         push!(
             instance["run_log"],
             (nodes_explored, counter, lower, upper, now_gap, current_time_elapsed)
@@ -306,7 +306,7 @@ function branchandbound_frob_matrixcomp(
     (n, m) = size(A)
     printlist = String[]
 
-    add_message!(printlist, [
+    add_message!(printlist, String[
         Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), 
         "\n",
         (noise ? 
@@ -340,20 +340,20 @@ function branchandbound_frob_matrixcomp(
         "\n",
     ])
     if use_disjunctive_cuts
-        add_message!(printlist, [
+        add_message!(printlist, String[
             Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
             Printf.@sprintf("Disjunctive cuts type:                          %15s\n", disjunctive_cuts_type),
             Printf.@sprintf("Disjunction breakpoints:                        %15s\n", disjunctive_cuts_breakpoints),
         ])
     else
-        add_message!(printlist, [
+        add_message!(printlist, String[
             Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
             Printf.@sprintf("Branching type:                                 %15s\n", branching_type),
             Printf.@sprintf("Branching point:                                %15s\n", branch_point),
         ])
     end
     if !noise
-        add_message!(printlist, [
+        add_message!(printlist, String[
             (k == 1 ? 
             Printf.@sprintf("(Noiseless) Apply presolve?:                    %15s\n", presolve) : ""),
             (k == 1 && presolve ? 
@@ -361,7 +361,7 @@ function branchandbound_frob_matrixcomp(
         ])
     end
     if use_disjunctive_cuts
-        add_message!(printlist, [
+        add_message!(printlist, String[
             Printf.@sprintf("Use Shor LMI inequalities?:                     %15s\n", add_Shor_valid_inequalities),
             (add_Shor_valid_inequalities ?
             Printf.@sprintf("Proportion of Shor LMI inequalities?:           %15f\n", add_Shor_valid_inequalities_fraction) : ""),
@@ -544,7 +544,7 @@ function branchandbound_frob_matrixcomp(
             "X" => X_initial,
         )
         if sum(indices_presolved) == m * n
-            add_message!(printlist, [
+            add_message!(printlist, String[
                 "Solved in presolve stage.\n",
             ])            
             end_time = time()
@@ -715,7 +715,7 @@ function branchandbound_frob_matrixcomp(
 
     nodes[1] = initial_node
 
-    add_message!(printlist, [
+    add_message!(printlist, String[
         "-----------------------------------------------------------------------------------\n",
         "|   Explored |      Total |      Lower |      Upper |        Gap |    Runtime (s) |\n",
         "-----------------------------------------------------------------------------------\n",
@@ -1188,14 +1188,14 @@ function branchandbound_frob_matrixcomp(
     instance["run_details"]["nodes_relax_feasible_split_altmin"] = nodes_relax_feasible_split_altmin
     instance["run_details"]["nodes_relax_feasible_split_altmin_improvement"] = nodes_relax_feasible_split_altmin_improvement
 
-    add_message!(printlist, ["\n\nRun details:\n"])
-    add_message!(printlist, [
+    add_message!(printlist, String["\n\nRun details:\n"])
+    add_message!(printlist, String[
         if startswith(k, "nodes")
             Printf.@sprintf("%46s: %10d\n", k, v)
         elseif startswith(k, "time") || startswith(k, "solve_time")
             Printf.@sprintf("%46s: %10.3f\n", k, v)
         elseif startswith(k, "dict")
-            nothing
+            ""
         else
             Printf.@sprintf("%46s: %s\n", k, v)
         end
@@ -1203,7 +1203,7 @@ function branchandbound_frob_matrixcomp(
     ])
     if !use_disjunctive_cuts
         for item in ranges
-            add_message!(printlist, [
+            add_message!(printlist, String[
                 Printf.@sprintf("\n\nnode_id: %10d\n", item[1]),
                 "\nU_lower:\n",
                 sprint(show, "text/plain", item[2]),
@@ -1212,7 +1212,7 @@ function branchandbound_frob_matrixcomp(
             ])               
         end
     end
-    add_message!(printlist, [
+    add_message!(printlist, String[
         "\n--------------------------------\n",
         "\n\nInitial solution (warm start):\n",
         sprint(show, "text/plain", objective_initial),
