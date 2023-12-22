@@ -25,14 +25,14 @@ export BBNode
 @with_kw mutable struct BBNode
     node_id::Int
     parent_id::Int
-    U_lower::Union{Matrix{Float64}, Nothing} = nothing
-    U_upper::Union{Matrix{Float64}, Nothing} = nothing
-    matrix_cuts::Union{Vector{Tuple}, Nothing} = nothing
-    LB::Union{Float64, Nothing} = nothing
+    U_lower::Matrix{Float64}
+    U_upper::Matrix{Float64}
+    matrix_cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[]
+    LB::Float64
     depth::Int
-    linear_coupling_constraints_indexes::Vector{Tuple} = []
-    Shor_constraints_indexes::Vector{Tuple} = []
-    Shor_SOC_constraints_indexes::Vector{Tuple} = []
+    linear_coupling_constraints_indexes::Vector{Tuple{Vector{Int}, Vector{Int}, String, Int}} = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
+    Shor_constraints_indexes::Vector{NTuple{4, Int}} = NTuple{4, Int}[]
+    Shor_SOC_constraints_indexes::Vector{Tuple{Int, Int}} = Tuple{Int, Int}[]
     master_feasible::Bool = false
 end
 
@@ -135,7 +135,8 @@ function branchandbound_frob_matrixcomp(
     update_step::Int = 1000,
 )
     function add_message!(
-        printlist, message_list
+        printlist::Vector{String}, 
+        message_list::Vector{String},
     )
         for message in message_list
             print(stdout, message)
@@ -145,8 +146,13 @@ function branchandbound_frob_matrixcomp(
     end
 
     function add_update!(
-        printlist, instance, nodes_explored, counter, 
-        lower, upper, start_time,
+        printlist::Vector{String}, 
+        instance::Dict{String, Any}, 
+        nodes_explored::Int,
+        counter::Int, 
+        lower::Float64, 
+        upper::Float64, 
+        start_time::Float64,
         ;
         altmin_flag::Bool = false
     )
@@ -298,7 +304,7 @@ function branchandbound_frob_matrixcomp(
     Random.seed!(0)
 
     (n, m) = size(A)
-    printlist = []
+    printlist = String[]
 
     add_message!(printlist, [
         Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), 
@@ -339,6 +345,12 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("Disjunctive cuts type:                          %15s\n", disjunctive_cuts_type),
             Printf.@sprintf("Disjunction breakpoints:                        %15s\n", disjunctive_cuts_breakpoints),
         ])
+    else
+        add_message!(printlist, [
+            Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
+            Printf.@sprintf("Branching type:                                 %15s\n", branching_type),
+            Printf.@sprintf("Branching point:                                %15s\n", branch_point),
+        ])
     end
     if !noise
         add_message!(printlist, [
@@ -365,12 +377,6 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("(Iterative) Shor indices prob. decay rate:      %15s\n", update_Shor_indices_probability_decay_rate) : ""),
             (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative ? 
             Printf.@sprintf("(Iterative) update Shor indices batch size:     %15s\n", update_Shor_indices_n_minors) : ""),        
-        ])
-    else
-        add_message!(printlist, [
-            Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
-            Printf.@sprintf("Branching type:                                 %15s\n", branching_type),
-            Printf.@sprintf("Branching point:                                %15s\n", branch_point),
         ])
     end
 
@@ -440,7 +446,7 @@ function branchandbound_frob_matrixcomp(
     nodes_relax_feasible_split_altmin_improvement = 0
     # (11) ⊂ (10)
 
-    instance = Dict()
+    instance = Dict{String, Any}()
     instance["run_log"] = DataFrame(
         explored = Int[],
         total = Int[],
@@ -473,8 +479,6 @@ function branchandbound_frob_matrixcomp(
         "use_disjunctive_cuts" => use_disjunctive_cuts,
         "disjunctive_cuts_type" => disjunctive_cuts_type,
         "disjunctive_cuts_breakpoints" => disjunctive_cuts_breakpoints,
-        "disjunctive_slices" => false, # deprecated
-        "disjunctive_sorting" => false, # deprecated
         "presolve" => presolve,
         "add_basis_pursuit_valid_inequalities" => add_basis_pursuit_valid_inequalities,
         "add_Shor_valid_inequalities" => add_Shor_valid_inequalities,
@@ -563,7 +567,6 @@ function branchandbound_frob_matrixcomp(
             ;
             disjunctive_cuts_type = disjunctive_cuts_type,
             U_initial = altmin_U_initial,
-            matrix_cuts = [],
             time_limit = time_limit,
         )
         solve_time_altmin += altmin_results["solve_time"]
@@ -613,7 +616,7 @@ function branchandbound_frob_matrixcomp(
     )
 
     if !use_disjunctive_cuts
-        ranges = []
+        ranges = Tuple{Int, Matrix{Float64}, Matrix{Float64}}[]
     end
     nodes = Dict{Int, BBNode}()
     upper = objective_initial
@@ -627,7 +630,6 @@ function branchandbound_frob_matrixcomp(
     initial_node = BBNode(
         U_lower = U_lower_initial, 
         U_upper = U_upper_initial, 
-        matrix_cuts = [],
         LB = lower,
         depth = 0,
         node_id = 1,
@@ -653,7 +655,7 @@ function branchandbound_frob_matrixcomp(
                 """)
             end
         else
-            initial_node.linear_coupling_constraints_indexes = []
+            initial_node.linear_coupling_constraints_indexes = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
         end
     end
 
@@ -697,8 +699,8 @@ function branchandbound_frob_matrixcomp(
             )
         end
     elseif (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative)
-        initial_node.Shor_constraints_indexes = []
-        Shor_non_SOC_constraints_indexes = []
+        initial_node.Shor_constraints_indexes = NTuple{4, Int}[]
+        Shor_non_SOC_constraints_indexes = Tuple{Int, Int}[]
         initial_node.Shor_SOC_constraints_indexes = vec(collect(Iterators.product(1:n, 1:m)))
     elseif (!add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative)
         error("""
@@ -706,9 +708,9 @@ function branchandbound_frob_matrixcomp(
         requires `add_Shor_valid_inequalities` to be `true`.
         """)
     else
-        initial_node.Shor_constraints_indexes = []
-        Shor_non_SOC_constraints_indexes = []
-        initial_node.Shor_SOC_constraints_indexes = []
+        initial_node.Shor_constraints_indexes = NTuple{4, Int}[]
+        Shor_non_SOC_constraints_indexes = Tuple{Int, Int}[]
+        initial_node.Shor_SOC_constraints_indexes = Tuple{Int, Int}[]
     end
 
     nodes[1] = initial_node
@@ -846,7 +848,6 @@ function branchandbound_frob_matrixcomp(
                 X_relax = relax_result["X"]
                 Θ_relax = relax_result["Θ"]
                 α_relax = relax_result["α"]
-                Y_slices_relax = nothing
                 if current_node.node_id == 1
                     lower = objective_relax
                 end
@@ -992,7 +993,6 @@ function branchandbound_frob_matrixcomp(
                     disjunctive_cuts_breakpoints,
                     ;
                     Y = Y_relax, 
-                    Y_slices = Y_slices_relax,
                     U = U_relax,
                     X = X_relax,
                     indices = indices_presolved,
@@ -1146,11 +1146,11 @@ function branchandbound_frob_matrixcomp(
                 last_updated_counter = counter
 
                 if !use_disjunctive_cuts
-                    item = [
+                    item = (
                         current_node.node_id,
                         current_node.U_lower,
                         current_node.U_upper,
-                    ]
+                    )
                     push!(ranges, item)
                 end
                 if root_only
@@ -1439,10 +1439,10 @@ function relax_frob_matrixcomp(
     ;
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
     add_basis_pursuit_valid_inequalities::Bool = false,
-    linear_coupling_constraints_indexes::Union{Vector, Nothing} = nothing,
+    linear_coupling_constraints_indexes::Vector{Tuple{Vector{Int}, Vector{Int}, String, Int}} = Tuple{Vector{Int}, Vector{Int}, String, Int}[],
     add_Shor_valid_inequalities::Bool = false,
-    Shor_constraints_indexes::Union{Vector, Nothing} = nothing,
-    Shor_SOC_constraints_indexes::Union{Vector, Nothing} = nothing,
+    Shor_constraints_indexes::Vector{NTuple{4, Int}} = NTuple{4, Int}[],
+    Shor_SOC_constraints_indexes::Vector{Tuple{Int, Int}} = Tuple{Int, Int}[],
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
         for i in 1:k
@@ -1451,7 +1451,7 @@ function relax_frob_matrixcomp(
         U_lower
     end,
     U_upper::Array{Float64,2} = ones(n,k),
-    matrix_cuts::Union{Vector, Nothing} = nothing,
+    matrix_cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[],
     orthogonality_tolerance::Float64 = 0.0,
     solver_output::Int = 0,
     time_limit::Int = 3600, # forces Mosek to not use a time limit
@@ -1997,7 +1997,7 @@ function alternating_minimization(
         U_lower
     end,
     U_upper::Array{Float64,2} = ones(n,k),
-    matrix_cuts::Union{Vector, Nothing} = nothing,
+    matrix_cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[],
     ϵ::Float64 = 1e-5,
     orthogonality_tolerance::Float64 = 1e-8,
     max_iters::Int = 100,
@@ -2380,7 +2380,6 @@ function create_matrix_cut_child_nodes(
     disjunctive_cuts_breakpoints::String,
     ;
     Y::Union{Matrix{Float64}, Nothing} = nothing,
-    Y_slices::Union{Array{Float64, 3}, Nothing} = nothing,
     U::Matrix{Float64},
     X::Matrix{Float64},
     indices::BitMatrix,
@@ -2642,13 +2641,7 @@ function generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(
     rowind = unique([findfirst(indices_presolved[rowp, j]) for j in colp])
     colind = unique([findfirst(indices_presolved[i, colp]) for i in rowp])
 
-    constrained_vars_R = Dict(
-        i => [] for i in 1:n
-    )
-    constrained_vars_C = Dict(
-        j => [] for j in 1:m
-    )
-    linear_coupling_constraints_indexes = []
+    linear_coupling_constraints_indexes = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
     for block_i in 1:length(rowind), block_j in 1:length(colind)
         if block_i == block_j
             continue
@@ -2718,13 +2711,13 @@ function generate_rank2_basis_pursuit_linear_coupling_constraints_indexes(
 )
     (n, m) = size(indices_presolved)
 
-    constrained_vars_R = Dict(
-        i => [] for i in 1:n
-    )
-    constrained_vars_C = Dict(
-        j => [] for j in 1:m
-    )
-    linear_coupling_constraints_indexes = []
+    constrained_vars_R = [
+        Vector{Int}[] for i in 1:n
+    ]
+    constrained_vars_C = [
+        Vector{Int}[] for j in 1:m
+    ]
+    linear_coupling_constraints_indexes = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
     for (j0, j1) in combinations(1:m, 2)
         selected_rows = findall(indices[:,j0] .& indices[:,j1])
         if length(selected_rows) ≤ 2
@@ -2826,13 +2819,13 @@ function generate_rankk_basis_pursuit_linear_coupling_constraints_indexes(
 )
     (n, m) = size(indices_presolved)
 
-    constrained_vars_R = Dict(
-        i => [] for i in 1:n
-    )
-    constrained_vars_C = Dict(
-        j => [] for j in 1:m
-    )
-    linear_coupling_constraints_indexes = []
+    constrained_vars_R = [
+        Vector{Int}[] for i in 1:n
+    ]
+    constrained_vars_C = [
+        Vector{Int}[] for j in 1:m
+    ]
+    linear_coupling_constraints_indexes = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
     for C in combinations(1:m, k)
         selected_rows = findall(vec(all(indices_presolved[:,C], dims=2)))
         if length(selected_rows) ≤ k
@@ -2922,7 +2915,7 @@ function generate_rank1_basis_pursuit_Shor_constraints_indexes(
     rowind = unique([findfirst(indices_presolved[rowp, j]) for j in colp])
     colind = unique([findfirst(indices_presolved[i, colp]) for i in rowp])
 
-    Shor_constraints_indexes = []
+    Shor_constraints_indexes = NTuple{4, Int}[]
     # One entry present
     if num_entries_present == 1
         for block_i1 in 1:(length(rowind)-1), block_i2 in (block_i1+1):length(rowind)
@@ -2973,7 +2966,7 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
     # Used in basis pursuit: Shor LMIs in rank-1
     (n, m) = size(indices)
 
-    Shor_constraints_indexes = []
+    Shor_constraints_indexes = NTuple{4, Int}[]
 
     for num_entries_present in num_entries_present_list
         if num_entries_present == 4    
@@ -3051,7 +3044,7 @@ function generate_violated_Shor_minors(
     X::Array{Float64, 3},
     indices::BitMatrix,
     Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int},
-    Shor_constraints_indexes::Vector{Tuple},
+    Shor_constraints_indexes::Vector{NTuple{4, Int}},
     n_minors::Int,
 )
     (k, n, m) = size(X)
