@@ -2512,7 +2512,7 @@ function create_matrix_cut_child_nodes(
             BBNode(
                 U_lower = node.U_lower,
                 U_upper = node.U_upper,
-                matrix_cuts = vcat(node.matrix_cuts, [(breakpoint_vec, U, directions)]),
+                matrix_cuts = vcat(node.matrix_cuts, [(breakpoint_vec, U, collect(directions))]),
                 # initialize a node's LB with the objective of relaxation of parent
                 LB = objective_relax,
                 depth = node.depth + 1,
