@@ -1925,7 +1925,33 @@ function relax_frob_matrixcomp(
         )
     )
         results["feasible"] = true
-        results["objective"] = objective_value(model)
+        # recompute objective value manually
+        if !noise
+            results["objective"] = (
+                (1 / (2 * γ)) * sum(value.(Θ)[i, i] for i = 1:m)
+                + λ * sum(value.(Y)[i, i] for i = 1:n)
+            )
+        else
+            if add_Shor_valid_inequalities
+                results["objective"] = (
+                    (1 / 2) * sum(
+                        (A[i,j]^2 - 2 * A[i,j] * value.(X)[i,j] + value.(W)[i,j]) * indices[i, j] 
+                        for i = 1:n, j = 1:m
+                    ) 
+                    + (1 / (2 * γ)) * sum(value.(Θ)[i, i] for i = 1:m) 
+                    + λ * sum(value.(Y)[i, i] for i = 1:n)
+                )
+            else
+                results["objective"] = (
+                    (1 / 2) * sum(
+                        (A[i,j] - value.(X)[i,j])^2 * indices[i, j] 
+                        for i = 1:n, j = 1:m
+                    ) 
+                    + (1 / (2 * γ)) * sum(value.(Θ)[i, i] for i = 1:m) 
+                    + λ * sum(value.(Y)[i, i] for i = 1:n)
+                )
+            end
+        end
         results["α"] = compute_α(value.(Y), γ, A, indices)
         results["Y"] = value.(Y)
         results["U"] = value.(U)
