@@ -19,6 +19,7 @@ using Mosek
 using MosekTools
 
 export branchandbound_frob_matrixcomp
+export relax_frob_matrixcomp
 export rankk_presolve
 export BBNode
 
