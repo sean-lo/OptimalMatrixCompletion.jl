@@ -17,9 +17,13 @@ using JuMP
 using MathOptInterface
 using Mosek
 using MosekTools
+using SCS
 
 export branchandbound_frob_matrixcomp
 export relax_frob_matrixcomp
+export compute_relax_objective
+export evaluate_objective
+export alternating_minimization
 export rankk_presolve
 export BBNode
 
@@ -34,6 +38,7 @@ export BBNode
     linear_coupling_constraints_indexes::Vector{Tuple{Vector{Int}, Vector{Int}, String, Int}} = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
     Shor_constraints_indexes::Vector{NTuple{4, Int}} = NTuple{4, Int}[]
     Shor_SOC_constraints_indexes::Vector{Tuple{Int, Int}} = Tuple{Int, Int}[]
+    FOM_warm_start_results::Dict{String, Any} = Dict{String, Any}()
     master_feasible::Bool = false
 end
 
@@ -125,6 +130,12 @@ function branchandbound_frob_matrixcomp(
     min_update_Shor_indices_probability::Float64 = 0.1,
     update_Shor_indices_probability_decay_rate::Float64 = 1.1,
     update_Shor_indices_n_minors::Int = 100,
+    SDP_root_node_solver::String = "Mosek",
+    SDP_child_node_solver::String = "Mosek",
+    FOM_warm_start::Bool = false,
+    SCS_eps_rel::Float64 = 1e-4, # SCS default, Mosek default is 1e-8
+    SCS_eps_abs::Float64 = 1e-4, # SCS default, Mosek default is 1e-8
+    SCS_eps_infeas::Float64 = 1e-7, # SCS default, Mosek default is 1e-8
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     max_altmin_probability::Float64 = 1.0,
@@ -301,6 +312,20 @@ function branchandbound_frob_matrixcomp(
         update_Shor_indices_n_minors = nothing
     end
 
+    if !(SDP_root_node_solver in ["Mosek", "SCS"])
+        error("""
+        Invalid input for SDP root node solver.
+        SDP root node solver must be either "Mosek" or "SCS"; $SDP_root_node_solver supplied instead.
+        """)
+    end
+    if !(SDP_child_node_solver in ["Mosek", "SCS"])
+        error("""
+        Invalid input for SDP child node solver.
+        SDP child node solver must be either "Mosek" or "SCS"; $SDP_child_node_solver supplied instead.
+        """)
+    end
+
+
     log_time = Dates.now()
     Random.seed!(0)
 
@@ -378,6 +403,22 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("(Iterative) Shor indices prob. decay rate:      %15s\n", update_Shor_indices_probability_decay_rate) : ""),
             (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative ? 
             Printf.@sprintf("(Iterative) update Shor indices batch size:     %15s\n", update_Shor_indices_n_minors) : ""),        
+        ])
+    end
+    add_message!(printlist, String[
+        Printf.@sprintf("SDP root node solver:                           %15s\n", SDP_root_node_solver),
+    ])
+    if SDP_child_node_solver == "Mosek"
+        add_message!(printlist, String[
+            Printf.@sprintf("SDP solver:                                     %15s\n", SDP_child_node_solver),
+        ])
+    else
+        add_message!(printlist, String[
+            Printf.@sprintf("SDP solver:                                     %15s\n", SDP_child_node_solver),
+            Printf.@sprintf("Warm-start SDPs using first-order methods?      %15s\n", FOM_warm_start),
+            Printf.@sprintf("SCS relative tolerance:                            %e\n", SCS_eps_rel),
+            Printf.@sprintf("SCS absolute tolerance:                            %e\n", SCS_eps_abs),
+            Printf.@sprintf("SCS infeasibility tolerance:                       %e\n", SCS_eps_infeas),
         ])
     end
 
@@ -490,6 +531,12 @@ function branchandbound_frob_matrixcomp(
         "update_Shor_indices_probability_decay_rate" => update_Shor_indices_probability_decay_rate,
         "update_Shor_indices_n_minors" => update_Shor_indices_n_minors,
         "Shor_valid_inequalities_noisy_rank1_num_entries_present" => Shor_valid_inequalities_noisy_rank1_num_entries_present,
+        "SDP_root_node_solver" => SDP_root_node_solver,
+        "SDP_child_node_solver" => SDP_child_node_solver,
+        "FOM_warm_start" => FOM_warm_start,
+        "SCS_eps_rel" => SCS_eps_rel,
+        "SCS_eps_abs" => SCS_eps_abs,
+        "SCS_eps_infeas" => SCS_eps_infeas,
         "branching_type" => branching_type,
         "branch_point" => branch_point,
         "log_time" => log_time,
@@ -798,6 +845,13 @@ function branchandbound_frob_matrixcomp(
                         Shor_constraints_indexes = current_node.Shor_constraints_indexes,
                         Shor_SOC_constraints_indexes = current_node.Shor_SOC_constraints_indexes,
                         matrix_cuts = current_node.matrix_cuts,
+                        solver = (current_node.node_id > 1 ? SDP_child_node_solver : SDP_root_node_solver),
+                        use_FOM_warm_start = FOM_warm_start && (current_node.node_id > 1),
+                        store_FOM_warm_start = FOM_warm_start,
+                        FOM_warm_start_results = current_node.FOM_warm_start_results,
+                        SCS_eps_rel = SCS_eps_rel,
+                        SCS_eps_abs = SCS_eps_abs,
+                        SCS_eps_infeas = SCS_eps_infeas,
                         time_limit = time_limit,
                     )
                 else
@@ -809,6 +863,13 @@ function branchandbound_frob_matrixcomp(
                         Shor_constraints_indexes = current_node.Shor_constraints_indexes,
                         Shor_SOC_constraints_indexes = current_node.Shor_SOC_constraints_indexes,
                         matrix_cuts = current_node.matrix_cuts,
+                        solver = (current_node.node_id > 1 ? SDP_child_node_solver : SDP_root_node_solver),
+                        use_FOM_warm_start = FOM_warm_start && (current_node.node_id > 1),
+                        store_FOM_warm_start = FOM_warm_start,
+                        FOM_warm_start_results = current_node.FOM_warm_start_results,
+                        SCS_eps_rel = SCS_eps_rel,
+                        SCS_eps_abs = SCS_eps_abs,
+                        SCS_eps_infeas = SCS_eps_infeas,
                         time_limit = time_limit,
                     )
                 end
@@ -821,6 +882,13 @@ function branchandbound_frob_matrixcomp(
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
                     add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
+                    solver = (current_node.node_id > 1 ? SDP_child_node_solver : SDP_root_node_solver),
+                    use_FOM_warm_start = FOM_warm_start && (current_node.node_id > 1),
+                    store_FOM_warm_start = FOM_warm_start,
+                    FOM_warm_start_results = current_node.FOM_warm_start_results,
+                    SCS_eps_rel = SCS_eps_rel,
+                    SCS_eps_abs = SCS_eps_abs,
+                    SCS_eps_infeas = SCS_eps_infeas,
                     time_limit = time_limit,
                 )
             end
@@ -993,9 +1061,7 @@ function branchandbound_frob_matrixcomp(
                     disjunctive_cuts_type,
                     disjunctive_cuts_breakpoints,
                     ;
-                    Y = Y_relax, 
-                    U = U_relax,
-                    X = X_relax,
+                    relax_result = relax_result,
                     indices = indices_presolved,
                     counter = counter,
                     objective_relax = objective_relax,
@@ -1084,6 +1150,7 @@ function branchandbound_frob_matrixcomp(
                     depth = current_node.depth + 1,
                     node_id = counter + 1,
                     parent_id = current_node.node_id,
+                    FOM_warm_start_results = relax_result,
                 )
                 right_child_node = BBNode(
                     U_lower = U_lower_right,
@@ -1093,6 +1160,7 @@ function branchandbound_frob_matrixcomp(
                     node_id = counter + 2,
                     depth = current_node.depth + 1,
                     parent_id = current_node.node_id,
+                    FOM_warm_start_results = relax_result,
                 )
                 merge!(
                     nodes, 
@@ -1454,6 +1522,13 @@ function relax_frob_matrixcomp(
     U_upper::Array{Float64,2} = ones(n,k),
     matrix_cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[],
     orthogonality_tolerance::Float64 = 0.0,
+    solver::String = "Mosek",
+    use_FOM_warm_start::Bool = false,
+    store_FOM_warm_start::Bool = false,
+    FOM_warm_start_results::Dict{String, Any} = Dict{String, Any}(),
+    SCS_eps_rel::Float64 = 1e-8, # Mosek default
+    SCS_eps_abs::Float64 = 1e-8, # Mosek default
+    SCS_eps_infeas::Float64 = 1e-12, # Mosek default
     solver_output::Int = 0,
     time_limit::Int = 3600, # forces Mosek to not use a time limit
 )
@@ -1509,26 +1584,50 @@ function relax_frob_matrixcomp(
     (n, k) = size(U_lower)
     (n, m) = size(A)
 
-    model = Model(Mosek.Optimizer)
-    if solver_output == 0
-        set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
+    if solver == "Mosek"
+        model = Model(Mosek.Optimizer)
+        if solver_output == 0
+            set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
+        end
+        set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
+    elseif solver == "SCS"
+        model = Model(SCS.Optimizer)
+        set_optimizer_attribute(model, "eps_rel", SCS_eps_rel)
+        set_optimizer_attribute(model, "eps_abs", SCS_eps_abs)
+        set_optimizer_attribute(model, "eps_infeas", SCS_eps_infeas)
+    else
+        error("Solver = $solver not recognized.")
     end
-    set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
     set_time_limit_sec(model, time_limit)
 
     if add_Shor_valid_inequalities && k > 1
         @variable(model, Xt[1:k, 1:n, 1:m])
+        if solver == "SCS" && use_FOM_warm_start
+            set_start_value.(Xt, FOM_warm_start_results["Xt"])
+        end
         @expression(model, X[i=1:n, j=1:m], sum(Xt[:,i,j]))
     else
         @variable(model, X[1:n, 1:m])
+        if solver == "SCS" && use_FOM_warm_start
+            set_start_value.(X, FOM_warm_start_results["X"])
+        end
     end
     @variable(model, Y[1:n, 1:n], Symmetric)
     @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
+    if solver == "SCS" && use_FOM_warm_start
+        set_start_value.(Y, FOM_warm_start_results["Y"])
+        set_start_value.(Θ, FOM_warm_start_results["Θ"])
+        set_start_value.(U, FOM_warm_start_results["U"])
+    end
     if !use_disjunctive_cuts
         @variable(model, t[1:n, 1:k, 1:k])
+        if solver == "SCS" && use_FOM_warm_start
+            set_start_value.(t, FOM_warm_start_results["t"])
+        end
     end
     if add_Shor_valid_inequalities
+        # FIXME: what does warm-starting mean for this?
         @variable(model, W[1:n, 1:m] ≥ 0)
         Shor_constraints_coords = unique(vcat(
             [
@@ -1581,29 +1680,39 @@ function relax_frob_matrixcomp(
 
     # If noiseless, coupling constraints between X and A
     if !noise
-        if k == 1
-            for i in 1:n, j in 1:m
-                if indices_presolved[i,j]
-                    @constraint(model, X[i,j] == A[i,j])
-                end
-            end
-        else
-            for i in 1:n, j in 1:m
-                if indices_presolved[i,j]
-                    @constraint(model, X[i,j] == A[i,j])
+        cons_noiseless = Dict{Tuple{Int, Int}, Any}()
+        for i in 1:n, j in 1:m
+            if indices_presolved[i,j]
+                cons_noiseless[(i,j)] = @constraint(model, X[i,j] == A[i,j])
+                if solver == "SCS" && use_FOM_warm_start
+                    set_start_value(cons_noiseless[(i,j)], FOM_warm_start_results["cons_noiseless"][(i,j)])
+                    set_dual_start_value(cons_noiseless[(i,j)], FOM_warm_start_results["cons_noiseless_dual"][(i,j)])
                 end
             end
         end
     end
 
-    @constraint(model, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
-    @constraint(model, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
-    @constraint(model, LinearAlgebra.Symmetric(I - Y) in PSDCone())
+    @constraint(model, cons_Y_X_Θ_PSD, LinearAlgebra.Symmetric([Y X; X' Θ]) in PSDCone())
+    @constraint(model, cons_Y_U_I_PSD, LinearAlgebra.Symmetric([Y U; U' I]) in PSDCone())
+    @constraint(model, cons_I_Y_PSD, LinearAlgebra.Symmetric(I - Y) in PSDCone())
     # Trace constraint on Y
-    @constraint(model, sum(Y[i,i] for i in 1:n) <= k)
+    @constraint(model, cons_Y_trace, sum(Y[i,i] for i in 1:n) <= k)
 
     # Lower bounds and upper bounds on U
-    @constraint(model, [i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
+    @constraint(model, cons_U_box[i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
+
+    if solver == "SCS" && use_FOM_warm_start
+        set_start_value(cons_Y_X_Θ_PSD, FOM_warm_start_results["cons_Y_X_Θ_PSD"])
+        set_start_value(cons_Y_U_I_PSD, FOM_warm_start_results["cons_Y_U_I_PSD"])
+        set_start_value(cons_I_Y_PSD, FOM_warm_start_results["cons_I_Y_PSD"])
+        set_start_value(cons_Y_trace, FOM_warm_start_results["cons_Y_trace"])
+        set_start_value.(cons_U_box, FOM_warm_start_results["cons_U_box"])
+        set_dual_start_value(cons_Y_X_Θ_PSD, FOM_warm_start_results["cons_Y_X_Θ_PSD_dual"])
+        set_dual_start_value(cons_Y_U_I_PSD, FOM_warm_start_results["cons_Y_U_I_PSD_dual"])
+        set_dual_start_value(cons_I_Y_PSD, FOM_warm_start_results["cons_I_Y_PSD_dual"])
+        set_dual_start_value(cons_Y_trace, FOM_warm_start_results["cons_Y_trace_dual"])
+        set_dual_start_value.(cons_U_box, FOM_warm_start_results["cons_U_box_dual"])
+    end
 
     # matrix cuts on U, if supplied
     if use_disjunctive_cuts
@@ -1865,12 +1974,13 @@ function relax_frob_matrixcomp(
     # 2-norm of columns of U are ≤ 1
     @constraint(
         model,
-        [j = 1:k],
-        [
-            1;
-            U[:,j]
-        ] in SecondOrderCone()
+        cons_U_columns[j = 1:k],
+        [1; U[:,j]] in SecondOrderCone()
     )
+    if solver == "SCS" && use_FOM_warm_start
+        set_start_value.(cons_U_columns, FOM_warm_start_results["cons_U_columns"])
+        set_dual_start_value.(cons_U_columns, FOM_warm_start_results["cons_U_columns_dual"])
+    end
 
     if !noise
         @objective(
@@ -1907,7 +2017,7 @@ function relax_frob_matrixcomp(
 
     optimize!(model)
     results = Dict(
-        "model" => model,
+        # "model" => model,
         "solve_time" => solve_time(model),
         "termination_status" => JuMP.termination_status(model),
     )
@@ -1927,37 +2037,32 @@ function relax_frob_matrixcomp(
     )
         results["feasible"] = true
         # recompute objective value manually
-        if !noise
-            results["objective"] = (
-                (1 / (2 * γ)) * sum(value.(Θ)[i, i] for i = 1:m)
-                + λ * sum(value.(Y)[i, i] for i = 1:n)
+        if !noise && add_Shor_valid_inequalities
+            results["objective"] = compute_relax_objective(
+                value.(X), value.(Y), value.(Θ), value.(U),
+                A, indices, γ, λ,
+                ;
+                noise = false,
+                add_Shor_valid_inequalities = true,
+                W = value.(W),
             )
         else
-            if add_Shor_valid_inequalities
-                results["objective"] = (
-                    (1 / 2) * sum(
-                        (A[i,j]^2 - 2 * A[i,j] * value.(X)[i,j] + value.(W)[i,j]) * indices[i, j] 
-                        for i = 1:n, j = 1:m
-                    ) 
-                    + (1 / (2 * γ)) * sum(value.(Θ)[i, i] for i = 1:m) 
-                    + λ * sum(value.(Y)[i, i] for i = 1:n)
-                )
-            else
-                results["objective"] = (
-                    (1 / 2) * sum(
-                        (A[i,j] - value.(X)[i,j])^2 * indices[i, j] 
-                        for i = 1:n, j = 1:m
-                    ) 
-                    + (1 / (2 * γ)) * sum(value.(Θ)[i, i] for i = 1:m) 
-                    + λ * sum(value.(Y)[i, i] for i = 1:n)
-                )
-            end
+            results["objective"] = compute_relax_objective(
+                value.(X), value.(Y), value.(Θ), value.(U),
+                A, indices, γ, λ,
+                ;
+                noise = noise,
+                add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+            )
         end
         results["α"] = compute_α(value.(Y), γ, A, indices)
         results["Y"] = value.(Y)
         results["U"] = value.(U)
         results["X"] = value.(X)
         results["Θ"] = value.(Θ)
+        if add_Shor_valid_inequalities && k > 1
+            results["Xt"] = value.(Xt)
+        end
         if !use_disjunctive_cuts
             results["t"] = value.(t)
         end
@@ -2002,7 +2107,75 @@ function relax_frob_matrixcomp(
         unexpected termination status: $(JuMP.termination_status(model))
         """)
     end
+    if store_FOM_warm_start && results["feasible"]
+        results["cons_Y_X_Θ_PSD"] = value.(cons_Y_X_Θ_PSD)
+        results["cons_Y_U_I_PSD"] = value.(cons_Y_U_I_PSD)
+        results["cons_I_Y_PSD"] = value.(cons_I_Y_PSD)
+        results["cons_Y_trace"] = value.(cons_Y_trace)
+        results["cons_U_box"] = value.(cons_U_box)
+        results["cons_U_columns"] = value.(cons_U_columns)
+        results["cons_Y_X_Θ_PSD_dual"] = dual.(cons_Y_X_Θ_PSD)
+        results["cons_Y_U_I_PSD_dual"] = dual.(cons_Y_U_I_PSD)
+        results["cons_I_Y_PSD_dual"] = dual.(cons_I_Y_PSD)
+        results["cons_Y_trace_dual"] = dual.(cons_Y_trace)
+        results["cons_U_box_dual"] = dual.(cons_U_box)
+        results["cons_U_columns_dual"] = dual.(cons_U_columns)
+        if !noise
+            results["cons_noiseless"] = Dict(
+                (i,j) => value(cons_noiseless[(i,j)])
+                for i in 1:n, j in 1:m if indices_presolved[i,j]
+            )
+            results["cons_noiseless_dual"] = Dict(
+                (i,j) => dual(cons_noiseless[(i,j)])
+                for i in 1:n, j in 1:m if indices_presolved[i,j]
+            )
+        end
+    end
     return results
+end
+
+function compute_relax_objective(
+    X::Matrix{Float64},
+    Y::Matrix{Float64},
+    Θ::Matrix{Float64},
+    U::Matrix{Float64},
+    A::Matrix{Float64},
+    indices::BitMatrix,
+    γ::Float64,
+    λ::Float64,
+    ;
+    noise::Bool = true,
+    add_Shor_valid_inequalities::Bool = false,
+    W::Matrix{Float64} = zeros(size(X)),
+)
+    (n, k) = size(U)
+    (n, m) = size(A)
+    if !noise
+        return (
+            (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m)
+            + λ * sum(Y[i, i] for i = 1:n)
+        )
+    else
+        if add_Shor_valid_inequalities
+            return (
+                (1 / 2) * sum(
+                    (A[i,j]^2 - 2 * A[i,j] * X[i,j] + W[i,j]) * indices[i, j] 
+                    for i = 1:n, j = 1:m
+                ) 
+                + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
+                + λ * sum(Y[i, i] for i = 1:n)
+            )
+        else
+            return (
+                (1 / 2) * sum(
+                    (A[i,j] - X[i,j])^2 * indices[i, j] 
+                    for i = 1:n, j = 1:m
+                ) 
+                + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
+                + λ * sum(Y[i, i] for i = 1:n)
+            )
+        end
+    end
 end
 
 function alternating_minimization(
@@ -2406,9 +2579,7 @@ function create_matrix_cut_child_nodes(
     disjunctive_cuts_type::String,
     disjunctive_cuts_breakpoints::String,
     ;
-    Y::Union{Matrix{Float64}, Nothing} = nothing,
-    U::Matrix{Float64},
-    X::Matrix{Float64},
+    relax_result::Dict{String, Any},
     indices::BitMatrix,
     counter::Int,
     objective_relax::Float64,
@@ -2439,6 +2610,10 @@ function create_matrix_cut_child_nodes(
         $disjunctive_cuts_breakpoints supplied instead.
         """)
     end
+
+    Y::Matrix{Float64} = relax_result["Y"]
+    U::Matrix{Float64} = relax_result["U"]
+    X::Matrix{Float64} = relax_result["X"]
     if !(
         size(U) == size(node.U_lower) == size(node.U_upper)
         && size(Y, 1) == size(U, 1) == size(X, 1)
@@ -2522,6 +2697,7 @@ function create_matrix_cut_child_nodes(
                 linear_coupling_constraints_indexes = node.linear_coupling_constraints_indexes,
                 Shor_constraints_indexes = Shor_constraints_indexes,
                 Shor_SOC_constraints_indexes = Shor_SOC_constraints_indexes,
+                FOM_warm_start_results = relax_result,
             )
             for (ind, directions) in directions_list
         )
