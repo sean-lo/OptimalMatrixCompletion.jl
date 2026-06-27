@@ -1,2 +1,2 @@
 .gitignore
-src/examples_*.jl
+.DS_Store

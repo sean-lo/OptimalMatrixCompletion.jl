@@ -17,46 +17,85 @@ using JuMP
 using MathOptInterface
 using Mosek
 using MosekTools
-using SCS
 
-export branchandbound_frob_matrixcomp
-export relax_frob_matrixcomp
-export compute_relax_objective
+export matrix_completion_branchandbound
+export matrix_completion_SDP_relaxation
+export compute_SDP_relaxation_objective
 export evaluate_objective
 export alternating_minimization
-export rankk_presolve
 export BBNode
+export BBTree
+
+export generate_rank1_matrix_completion_Shor_constraints_indexes
+export BBNodeDisjunctiveCuts
+export BBNodeShorInfo
+
+@with_kw mutable struct BBNodeDisjunctiveCuts
+    cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[]
+end
+
+@with_kw mutable struct BBNodeShorInfo
+    constraints_indexes::Vector{NTuple{4, Int}} = NTuple{4, Int}[]
+    SOC_constraints_indexes::Vector{Tuple{Int, Int}} = Tuple{Int, Int}[]
+end
 
 @with_kw mutable struct BBNode
     node_id::Int
     parent_id::Int
     U_lower::Matrix{Float64}
     U_upper::Matrix{Float64}
-    matrix_cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[]
     LB::Float64
     depth::Int
-    linear_coupling_constraints_indexes::Vector{Tuple{Vector{Int}, Vector{Int}, String, Int}} = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
-    Shor_constraints_indexes::Vector{NTuple{4, Int}} = NTuple{4, Int}[]
-    Shor_SOC_constraints_indexes::Vector{Tuple{Int, Int}} = Tuple{Int, Int}[]
-    FOM_warm_start_results::Dict{String, Any} = Dict{String, Any}()
     master_feasible::Bool = false
+    disjunctive_cuts::Union{
+        Nothing,
+        BBNodeDisjunctiveCuts,
+    } = nothing
+    Shor_info::Union{
+        Nothing, 
+        BBNodeShorInfo,
+    } = nothing
+end
+
+@with_kw mutable struct BBTree
+    nodes::Dict{Int, BBNode}
+    node_ids::Vector{Int}
+    counter::Int
+    last_updated_counter::Int
+    nodes_explored::Int
+    nodes_remaining::Int
+    best_upper_bound::Float64
+    best_lower_bound::Float64
+    now_gap::Float64
+    lower_bounds::PriorityQueue
+end
+
+
+function add_message!(
+    printlist::Vector{String}, 
+    message_list::Vector{String},
+)
+    for message in message_list
+        print(stdout, message)
+        flush(stdout)
+        push!(printlist, message)
+    end
+    return
 end
 
 @doc raw"""
-    branchandbound_frob_matrixcomp(
+    matrix_completion_branchandbound(
         k::Int,
         A::Array{Float64, 2},
         indices::BitMatrix,
         γ::Float64,
-        λ::Float64,
-        noise::Bool,
         ;
         <keyword arguments>
     )
 
 Complete matrix `A` with observed indices in `indices` with rank-`k` matrix `X`.
 
-In the noisy case (`noise == true`), solves (with regularization parameter `γ`):
+We solve (with regularization parameter `γ`):
 ```math
 \min_{\mathbf{X}}
 \frac{1}{2} \sum_{(i,j) \in \mathcal{I}} (X_{i,j} - A_{i,j})^2 
@@ -64,27 +103,14 @@ In the noisy case (`noise == true`), solves (with regularization parameter `γ`)
 \quad 
 \text{s.t. } \text{Rank}(\mathbf{X}) \leq k
 ```
-In the noiseless case (`noise == false`), solves:
-
-```math
-\min_{\mathbf{X}}
-\|\mathbf{X}\|_F^2
-\quad 
-\text{s.t. } X_{i,j} = A_{i,j} \ \forall (i,j) \in \mathcal{I}, 
-\ \text{Rank}(\mathbf{X}) \leq k
-```
 
 # Arguments
-- `branching_type::Union{String, Nothing} = nothing`: in the situation with `use_disjunctive_cuts = false`, determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient";
-- `branch_point::Union{String, Nothing} = nothing`: in the situation with `use_disjunctive_cuts = false`, determine which value to branch on: either "midpoint" or "current_point"
 - `node_selection::String = "breadthfirst"`: the node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst";
 - `bestfirst_depthfirst_cutoff::Int = 10000`: in the situation with `node_selection = "bestfirst_depthfirst"`, the number of nodes in the queue before the algorithm switches from `"bestfirst"` to `"depthfirst"`;
 - `gap::Float64 = 1e-4`: relative optimality gap for branch-and-bound algorithm;
 - `use_disjunctive_cuts::Bool = true`: whether to use eigenvector disjunctions, highly recommended to be `true`;
 - `disjunctive_cuts_type::Union{String, Nothing} = nothing`: number of pieces in piecewise linear upper-approximation; either "linear" (2 pieces) or "linear2" (3 pieces) or "linear3" (4 pieces);
 - `disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing`: number of eigenvectors to use in constructing separation oracle, either "smallest_1_eigvec" (most negative eigenvector) or "smallest_2_eigvec" (combination of first and second most negative eigenvectors);
-- `presolve::Bool = false`: in the noiseless setting (`noise = false`), whether to perform presolve, highly recommended to be `true`;
-- `add_basis_pursuit_valid_inequalities::Bool = false`: in the noiseless setting (`noise = false`), whether to impose valid inequalities from determinant minors;
 - `add_Shor_valid_inequalities::Bool = false`: whether to add Shor SDP inequalities to strengthen SDP relaxation at each node;
 - `Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1, 2, 3, 4]`: if `add_Shor_valid_inequalities` is true, the set of 2-by-2 determinant minors to model with Shor SDP inequalities, based on the number of filled entries (should be some subset of `[1, 2, 3, 4]`);
 - `add_Shor_valid_inequalities_fraction::Float64 = 1.0`: if `add_Shor_valid_inequalities` is true, the proportion of 2-by-2 determinant minors to model with Shor SDP inequalities;
@@ -98,30 +124,31 @@ In the noiseless case (`noise == false`), solves:
 - `max_altmin_probability::Float64 = 1.0`: if `altmin_flag` is true, the maximum probability of performing alternating minimization at a node;
 - `min_altmin_probability::Float64 = 0.005`: if `altmin_flag` is true, the minimum probability of performing alternating minimization at a node;
 - `altmin_probability_decay_rate::Float64 = 1.1`: if `altmin_flag` is true, the base of the exponential decay of the probability of performing alternating minimization at a node, as a function of depth in the tree;
+- `altmin_root_n_iters::Int = 1`: if `altmin_flag` is true, how many times to run alternating minimization at the root node to get a good solution;
 - `use_max_steps::Bool = false`: whether to terminate the algorithm based on the number of branch-and-bound nodes explored;
 - `max_steps::Int = 1000000`: if `use_max_steps` is true, the upper limit on number of branch-and-bound nodes explored;
 - `time_limit::Int = 3600`: time limit in seconds
 - `update_step::Int = 1000`: number of branch-and-bound nodes explored per printed update
+- `verbosity::Int = 0`: verbosity level
+    - 0 is silent
+    - 1 includes one line per update
+    - 2 includes all alternating minimization runs
+    - 3 includes one line per SDP relaxation solve
+    - 4 includes all SDP solver output
 
 """
-function branchandbound_frob_matrixcomp(
+function matrix_completion_branchandbound(
     k::Int,
-    A::Array{Float64,2}, # This is a rank-k matrix (optionally, with noise)
+    A::Array{Float64,2},
     indices::BitMatrix,
     γ::Float64,
-    λ::Float64,
-    noise::Bool,
     ;
-    branching_type::Union{String, Nothing} = nothing, # determining which coordinate to branch on: either "lexicographic" or "bounds" or "gradient"
-    branch_point::Union{String, Nothing} = nothing, # determine which value to branch on: either "midpoint" or "current_point"
     node_selection::String = "breadthfirst", # determining which node selection strategy to use: either "breadthfirst" or "bestfirst" or "depthfirst" or "bestfirst_depthfirst"
     bestfirst_depthfirst_cutoff::Int = 10000,
     gap::Float64 = 1e-4, # optimality gap for algorithm (proportion)
     use_disjunctive_cuts::Bool = true,
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
     disjunctive_cuts_breakpoints::Union{String, Nothing} = nothing, # either "smallest_1_eigvec" or "smallest_2_eigvec"
-    presolve::Bool = false,
-    add_basis_pursuit_valid_inequalities::Bool = false,
     add_Shor_valid_inequalities::Bool = false,
     Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [1, 2, 3, 4],
     add_Shor_valid_inequalities_fraction::Float64 = 1.0,
@@ -130,53 +157,45 @@ function branchandbound_frob_matrixcomp(
     min_update_Shor_indices_probability::Float64 = 0.1,
     update_Shor_indices_probability_decay_rate::Float64 = 1.1,
     update_Shor_indices_n_minors::Int = 100,
-    SDP_root_node_solver::String = "Mosek",
-    SDP_child_node_solver::String = "Mosek",
-    FOM_warm_start::Bool = false,
-    SCS_eps_rel::Float64 = 1e-4, # SCS default, Mosek default is 1e-8
-    SCS_eps_abs::Float64 = 1e-4, # SCS default, Mosek default is 1e-8
-    SCS_eps_infeas::Float64 = 1e-7, # SCS default, Mosek default is 1e-8
     root_only::Bool = false, # if true, only solves relaxation at root node
     altmin_flag::Bool = true,
     max_altmin_probability::Float64 = 1.0,
     min_altmin_probability::Float64 = 0.005,
     altmin_probability_decay_rate::Float64 = 1.1,
+    altmin_root_n_iters::Int = 1,
     use_max_steps::Bool = false,
     max_steps::Int = 1000000,
     time_limit::Int = 3600, # time limit in seconds
     update_step::Int = 1000,
+    verbosity::Int = 1,
 )
-    function add_message!(
-        printlist::Vector{String}, 
-        message_list::Vector{String},
-    )
-        for message in message_list
-            print(stdout, message)
-            push!(printlist, message)
+
+    function compute_gap(lower::Float64, upper::Float64)
+        if lower < 0
+            return Inf
+        else
+            return (upper / lower) - 1
         end
-        return
     end
 
     function add_update!(
         printlist::Vector{String}, 
         instance::Dict{String, Any}, 
-        nodes_explored::Int,
-        counter::Int, 
-        lower::Float64, 
-        upper::Float64, 
-        start_time::Float64,
+        tree::BBTree,
+        current_time_elapsed::Float64,
         ;
-        altmin_flag::Bool = false
+        altmin_flag::Bool = false,
+        print_message::Bool = true,
     )
-        now_gap = (upper / lower) - 1
-        current_time_elapsed = time() - start_time
+        tree.now_gap = compute_gap(tree.best_lower_bound, tree.best_upper_bound)
         message = Printf.@sprintf(
-            "| %10d | %10d | %10f | %10f | %10f | %10.3f  s  |",
-            nodes_explored, # Explored
-            counter, # Total
-            lower, # Objective
-            upper, # Incumbent
-            now_gap, # Gap
+            "| %10d | %10d | %10d | %10f | %10f | %10f | %10.3f  s  |",
+            tree.nodes_explored, # Explored
+            tree.counter, # Total
+            tree.nodes_remaining, # Remaining
+            tree.best_lower_bound, # Objective
+            tree.best_upper_bound, # Incumbent
+            tree.now_gap, # Gap
             current_time_elapsed, # Runtime
         )
         if altmin_flag
@@ -184,12 +203,15 @@ function branchandbound_frob_matrixcomp(
         else
             message *= "\n"
         end
-        add_message!(printlist, String[message])
+        print_message && add_message!(printlist, String[message])
         push!(
             instance["run_log"],
-            (nodes_explored, counter, lower, upper, now_gap, current_time_elapsed)
+            (
+                tree.nodes_explored, tree.counter, tree.nodes_remaining, 
+                tree.best_lower_bound, tree.best_upper_bound, tree.now_gap, current_time_elapsed,
+            )
         )
-        return now_gap
+        tree.last_updated_counter = tree.counter
     end
 
     if use_disjunctive_cuts
@@ -207,19 +229,6 @@ function branchandbound_frob_matrixcomp(
             $disjunctive_cuts_breakpoints supplied instead.
             """)
         end
-    else
-        if !(branching_type in ["lexicographic", "bounds", "gradient"])
-            error("""
-            Invalid input for branching type.
-            Branching type must be either "lexicographic" or "bounds" or "gradient"; $branching_type supplied instead.
-            """)
-        end
-        if !(branch_point in ["midpoint", "current_point"])
-            error("""
-            Invalid input for branch point.
-            Branch point must be either "midpoint" or "current_point"; $branch_point supplied instead.
-            """)
-        end
     end
     if !(node_selection in ["breadthfirst", "bestfirst", "depthfirst", "bestfirst_depthfirst"])
         error("""
@@ -235,7 +244,15 @@ function branchandbound_frob_matrixcomp(
         Input matrix indices must have size (n, m).
         """)
     end
-    
+
+    (n, m) = size(A)
+    if !(n ≤ m)
+        error("""
+        Input matrix A must have size (n, m) with n <= m.
+        Current size is $(size(A)).
+        """)
+    end
+
     if add_Shor_valid_inequalities
         if !(0.0 ≤ add_Shor_valid_inequalities_fraction ≤ 1.0)
             error(
@@ -248,7 +265,7 @@ function branchandbound_frob_matrixcomp(
         add_Shor_valid_inequalities_fraction = nothing
     end
 
-    if noise && altmin_flag
+    if altmin_flag
         if !(
             0.0 ≤ max_altmin_probability ≤ 1.0
         )
@@ -312,87 +329,52 @@ function branchandbound_frob_matrixcomp(
         update_Shor_indices_n_minors = nothing
     end
 
-    if !(SDP_root_node_solver in ["Mosek", "SCS"])
-        error("""
-        Invalid input for SDP root node solver.
-        SDP root node solver must be either "Mosek" or "SCS"; $SDP_root_node_solver supplied instead.
-        """)
-    end
-    if !(SDP_child_node_solver in ["Mosek", "SCS"])
-        error("""
-        Invalid input for SDP child node solver.
-        SDP child node solver must be either "Mosek" or "SCS"; $SDP_child_node_solver supplied instead.
-        """)
-    end
-
-
     log_time = Dates.now()
     Random.seed!(0)
 
-    (n, m) = size(A)
     printlist = String[]
 
-    add_message!(printlist, String[
+    (verbosity ≥ 1) && add_message!(printlist, String[
         Dates.format(log_time, "e, dd u yyyy HH:MM:SS"), 
         "\n",
-        (noise ? 
-        "Starting branch-and-bound on a (noisy) matrix completion problem.\n" :
-        "Starting branch-and-bound on a (noiseless) basis pursuit problem.\n"),
+        "Starting branch-and-bound on a matrix completion problem.\n",
         Printf.@sprintf("k:                                              %15d\n", k),
         Printf.@sprintf("m:                                              %15d\n", m),
         Printf.@sprintf("n:                                              %15d\n", n),
         Printf.@sprintf("num_indices:                                    %15d\n", sum(indices)),
-        (noise ? 
-        Printf.@sprintf("(Noisy) γ:                                      %15g\n", γ) : ""),
-        Printf.@sprintf("λ:                                              %15g\n", λ),
+        Printf.@sprintf("γ:                                              %15g\n", γ),
         "\n",
         Printf.@sprintf("Node selection:                                 %15s\n", node_selection),
         (node_selection == "bestfirst_depthfirst" ?
         Printf.@sprintf("Bestfirst-depthfirst cutoff:                    %15s\n", bestfirst_depthfirst_cutoff) : ""),
         Printf.@sprintf("Optimality gap:                                 %15g\n", gap),
         Printf.@sprintf("Only solve root node?:                          %15s\n", root_only),
-        (!root_only && noise ?
-        Printf.@sprintf("(Noisy) Do altmin at child nodes?:              %15s\n", altmin_flag) : ""),
-        (!root_only && noise && altmin_flag ? 
-        Printf.@sprintf("(Noisy) Max altmin probability:                 %15s\n", max_altmin_probability) : ""),
-        (!root_only && noise && altmin_flag ? 
-        Printf.@sprintf("(Noisy) Min altmin probability:                 %15s\n", min_altmin_probability) : ""),
-        (!root_only && noise && altmin_flag ? 
-        Printf.@sprintf("(Noisy) Altmin probability decay rate:          %15s\n", altmin_probability_decay_rate) : ""),
+        (!root_only ?
+        Printf.@sprintf("Do altmin at child nodes?:                      %15s\n", altmin_flag) : ""),
+        (!root_only && altmin_flag ? 
+        Printf.@sprintf("Max altmin probability:                         %15s\n", max_altmin_probability) : ""),
+        (!root_only && altmin_flag ? 
+        Printf.@sprintf("Min altmin probability:                         %15s\n", min_altmin_probability) : ""),
+        (!root_only && altmin_flag ? 
+        Printf.@sprintf("Altmin probability decay rate:                  %15s\n", altmin_probability_decay_rate) : ""),
+        (altmin_flag ? 
+        Printf.@sprintf("Number of initial altmin seeds:                 %15s\n", altmin_root_n_iters) : ""),
         Printf.@sprintf("Cap on nodes?                                   %15s\n", use_max_steps),
         (use_max_steps ?
         Printf.@sprintf("Maximum nodes:                                  %15d\n", max_steps) : ""),
         Printf.@sprintf("Time limit (s):                                 %15d\n", time_limit),
         "\n",
+        Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
     ])
     if use_disjunctive_cuts
-        add_message!(printlist, String[
-            Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
+        (verbosity ≥ 1) && add_message!(printlist, String[
             Printf.@sprintf("Disjunctive cuts type:                          %15s\n", disjunctive_cuts_type),
             Printf.@sprintf("Disjunction breakpoints:                        %15s\n", disjunctive_cuts_breakpoints),
-        ])
-    else
-        add_message!(printlist, String[
-            Printf.@sprintf("Use disjunctive cuts?:                          %15s\n", use_disjunctive_cuts),
-            Printf.@sprintf("Branching type:                                 %15s\n", branching_type),
-            Printf.@sprintf("Branching point:                                %15s\n", branch_point),
-        ])
-    end
-    if !noise
-        add_message!(printlist, String[
-            (k == 1 ? 
-            Printf.@sprintf("(Noiseless) Apply presolve?:                    %15s\n", presolve) : ""),
-            (k == 1 && presolve ? 
-            Printf.@sprintf("(Noiseless) Apply valid inequalities?:          %15s\n", add_basis_pursuit_valid_inequalities) : ""),
-        ])
-    end
-    if use_disjunctive_cuts
-        add_message!(printlist, String[
             Printf.@sprintf("Use Shor LMI inequalities?:                     %15s\n", add_Shor_valid_inequalities),
             (add_Shor_valid_inequalities ?
             Printf.@sprintf("Proportion of Shor LMI inequalities?:           %15f\n", add_Shor_valid_inequalities_fraction) : ""),
-            (noise && add_Shor_valid_inequalities ? 
-            Printf.@sprintf("(Noisy) (rank-1) Apply Shor LMI with            %15s entries.\n", Shor_valid_inequalities_noisy_rank1_num_entries_present) : ""),
+            (add_Shor_valid_inequalities ? 
+            Printf.@sprintf("(rank-1) Apply Shor LMI with            %15s entries.\n", Shor_valid_inequalities_noisy_rank1_num_entries_present) : ""),
             (add_Shor_valid_inequalities ? 
             Printf.@sprintf("Apply Shor LMI inequalities iteratively?        %15s\n", add_Shor_valid_inequalities_iterative) : ""),
             (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative ? 
@@ -403,22 +385,6 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("(Iterative) Shor indices prob. decay rate:      %15s\n", update_Shor_indices_probability_decay_rate) : ""),
             (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative ? 
             Printf.@sprintf("(Iterative) update Shor indices batch size:     %15s\n", update_Shor_indices_n_minors) : ""),        
-        ])
-    end
-    add_message!(printlist, String[
-        Printf.@sprintf("SDP root node solver:                           %15s\n", SDP_root_node_solver),
-    ])
-    if SDP_child_node_solver == "Mosek"
-        add_message!(printlist, String[
-            Printf.@sprintf("SDP solver:                                     %15s\n", SDP_child_node_solver),
-        ])
-    else
-        add_message!(printlist, String[
-            Printf.@sprintf("SDP solver:                                     %15s\n", SDP_child_node_solver),
-            Printf.@sprintf("Warm-start SDPs using first-order methods?      %15s\n", FOM_warm_start),
-            Printf.@sprintf("SCS relative tolerance:                            %e\n", SCS_eps_rel),
-            Printf.@sprintf("SCS absolute tolerance:                            %e\n", SCS_eps_abs),
-            Printf.@sprintf("SCS infeasibility tolerance:                       %e\n", SCS_eps_infeas),
         ])
     end
 
@@ -447,7 +413,6 @@ function branchandbound_frob_matrixcomp(
     # (2) number of nodes generated in total
     counter = 1
     last_updated_counter = 1    
-    now_gap = 1e5
 
     # (3) number of nodes whose parent has 
     # relaxation dominated by best solution found so far
@@ -492,13 +457,13 @@ function branchandbound_frob_matrixcomp(
     instance["run_log"] = DataFrame(
         explored = Int[],
         total = Int[],
+        remaining = Int[],
         lower = Float64[],
         upper = Float64[],
         gap = Float64[],
         runtime = Float64[],
     )
     instance["run_details"] = OrderedDict(
-        "noise" => noise,
         "k" => k,
         "m" => m,
         "n" => n,
@@ -506,7 +471,6 @@ function branchandbound_frob_matrixcomp(
         "indices" => indices,
         "num_indices" => convert(Int, round(sum(indices))),
         "γ" => γ,
-        "λ" => λ,
         "node_selection" => node_selection,
         "bestfirst_depthfirst_cutoff" => bestfirst_depthfirst_cutoff,
         "optimality_gap" => gap,
@@ -515,14 +479,13 @@ function branchandbound_frob_matrixcomp(
         "max_altmin_probability" => max_altmin_probability,
         "min_altmin_probability" => min_altmin_probability,
         "altmin_probability_decay_rate" => altmin_probability_decay_rate,
+        "altmin_root_n_iters" => altmin_root_n_iters,
         "use_max_steps" => use_max_steps,
         "max_steps" => max_steps,
         "time_limit" => time_limit,
         "use_disjunctive_cuts" => use_disjunctive_cuts,
         "disjunctive_cuts_type" => disjunctive_cuts_type,
         "disjunctive_cuts_breakpoints" => disjunctive_cuts_breakpoints,
-        "presolve" => presolve,
-        "add_basis_pursuit_valid_inequalities" => add_basis_pursuit_valid_inequalities,
         "add_Shor_valid_inequalities" => add_Shor_valid_inequalities,
         "add_Shor_valid_inequalities_fraction" => add_Shor_valid_inequalities_fraction,
         "add_Shor_valid_inequalities_iterative" => add_Shor_valid_inequalities_iterative,
@@ -531,25 +494,17 @@ function branchandbound_frob_matrixcomp(
         "update_Shor_indices_probability_decay_rate" => update_Shor_indices_probability_decay_rate,
         "update_Shor_indices_n_minors" => update_Shor_indices_n_minors,
         "Shor_valid_inequalities_noisy_rank1_num_entries_present" => Shor_valid_inequalities_noisy_rank1_num_entries_present,
-        "SDP_root_node_solver" => SDP_root_node_solver,
-        "SDP_child_node_solver" => SDP_child_node_solver,
-        "FOM_warm_start" => FOM_warm_start,
-        "SCS_eps_rel" => SCS_eps_rel,
-        "SCS_eps_abs" => SCS_eps_abs,
-        "SCS_eps_infeas" => SCS_eps_infeas,
-        "branching_type" => branching_type,
-        "branch_point" => branch_point,
         "log_time" => log_time,
         "start_time" => start_time,
         "end_time" => start_time,
         "time_taken" => 0.0,
-        "entries_presolved" => sum(indices),
         "solve_time_altmin" => solve_time_altmin,
         "dict_solve_times_altmin" => dict_solve_times_altmin,
         "dict_num_iterations_altmin" => dict_num_iterations_altmin,
         "solve_time_relaxation_feasibility" => solve_time_relaxation_feasibility,
         "solve_time_relaxation" => solve_time_relaxation,
         "dict_solve_times_relaxation" => dict_solve_times_relaxation,
+        "root_node_timeout" => false,
         "nodes_explored" => nodes_explored,
         "nodes_total" => counter,
         "nodes_dominated" => nodes_dominated,
@@ -562,60 +517,37 @@ function branchandbound_frob_matrixcomp(
         "nodes_relax_feasible_split_altmin" => nodes_relax_feasible_split_altmin,
         "nodes_relax_feasible_split_altmin_improvement" => nodes_relax_feasible_split_altmin_improvement,
     )
-
-    if !noise && presolve
-        indices_presolved, X_presolved = rankk_presolve(indices, A, k)
-        instance["run_details"]["entries_presolved"] = sum(indices_presolved)
-        X_initial = X_presolved
-        U_initial = svd(X_initial).U[:,1:k]
-        Y_initial = U_initial * U_initial'
-        objective_initial = evaluate_objective(
-            X_initial, A, indices, U_initial, γ, λ, noise
-        )
-        MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
-        MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
-        MSE_all_initial = compute_MSE(X_initial, A, indices, kind = "all")
-        solution = Dict(
-            "objective_initial" => objective_initial,
-            "MSE_in_initial" => MSE_in_initial,
-            "MSE_out_initial" => MSE_out_initial,
-            "MSE_all_initial" => MSE_all_initial,
-            "Y_initial" => Y_initial,
-            "U_initial" => U_initial,
-            "X_initial" => X_initial,
-            "objective" => objective_initial,
-            "MSE_in" => MSE_in_initial,
-            "MSE_out" => MSE_out_initial,
-            "MSE_all" => MSE_all_initial,
-            "Y" => Y_initial,
-            "U" => U_initial,
-            "X" => X_initial,
-        )
-        if sum(indices_presolved) == m * n
-            add_message!(printlist, String[
-                "Solved in presolve stage.\n",
-            ])            
-            end_time = time()
-            time_taken = end_time - start_time
-            instance["run_details"]["end_time"] = end_time
-            instance["run_details"]["time_taken"] = time_taken
-            return solution, printlist, instance
+    
+    altmin_start_time = time()
+    altmin_A_initial = zeros(n, m)
+    altmin_A_initial[indices] = A[indices]
+    altmin_U_initial_base = svd(altmin_A_initial).U[:,1:k]
+    
+    objective_initial = Inf
+    best_ind = 0
+    X_initial_array = Matrix{Float64}[] 
+    sc = maximum(abs.(altmin_U_initial_base))
+    (verbosity ≥ 1) && add_message!(printlist, [
+        "\n",
+        "------------------------------------------------------------------------------------------------\n",
+    ])
+    for altmin_iter in 1:altmin_root_n_iters
+        if altmin_iter == 1
+            altmin_U_initial = altmin_U_initial_base
+        else
+            altmin_U_initial = altmin_U_initial_base + sc * randn((n, k))
         end
-    else
-        indices_presolved = indices
-    end
-
-    if noise
-        altmin_A_initial = zeros(n, m)
-        altmin_A_initial[indices] = A[indices]
-        altmin_U_initial = svd(altmin_A_initial).U[:,1:k]
-
-        altmin_results = @suppress alternating_minimization(
-            A, n, k, indices, γ, λ, use_disjunctive_cuts,
+        altmin_results = alternating_minimization(
+            A, n, k, indices, γ, use_disjunctive_cuts,
             ;
             disjunctive_cuts_type = disjunctive_cuts_type,
             U_initial = altmin_U_initial,
             time_limit = time_limit,
+        )
+        alternating_minimization_printout(
+            printlist, 
+            altmin_results,
+            0, 1.0, verbosity,
         )
         solve_time_altmin += altmin_results["solve_time"]
         push!(
@@ -627,27 +559,51 @@ function branchandbound_frob_matrixcomp(
             ]
         )
         # do a re-SVD on U * V in order to recover orthonormal U
-        X_initial = altmin_results["U"] * altmin_results["V"]
-        U_initial = svd(X_initial).U[:,1:k]
-        Y_initial = U_initial * U_initial'
-        objective_initial = evaluate_objective(
-            X_initial, A, indices, U_initial, γ, λ, noise
+        X_initial_ = altmin_results["U"] * altmin_results["V"]
+        push!(X_initial_array, X_initial_)
+        U_initial_ = svd(X_initial_).U[:,1:k]
+        objective_initial_ = evaluate_objective(
+            X_initial_, A, indices, U_initial_, γ, 
         )
-        MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
-        MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
-        MSE_all_initial = compute_MSE(X_initial, A, indices, kind = "all")
-    else
-        objective_initial = Inf
-        MSE_in_initial = Inf
-        MSE_out_initial = Inf
-        MSE_all_initial = Inf
-        Y_initial = zeros(Float64, (n, n))
-        U_initial = zeros(Float64, (n, k))
-        X_initial = zeros(Float64, (n, m))
+        if objective_initial_ < objective_initial
+            objective_initial = objective_initial_
+            best_ind = altmin_iter
+        end
+        (verbosity ≥ 1) && add_message!(printlist, [
+            @sprintf(
+                "Altmin run %02d: \t Objective %e in %3.3f s.\n", 
+                altmin_iter, 
+                objective_initial_, 
+                (time() - altmin_start_time),
+            )
+        ])
     end
-    
+
+    # Select best alternating result in terms of upper bound
+    X_initial = X_initial_array[best_ind]
+    # do a re-SVD on U * V in order to recover orthonormal U
+    U_initial = svd(X_initial).U[:,1:k]
+    Y_initial = U_initial * U_initial'
+    objective_initial = evaluate_objective(
+        X_initial, A, indices, U_initial, γ, 
+    )
+    MSE_in_initial = compute_MSE(X_initial, A, indices, kind = "in")
+    MSE_out_initial = compute_MSE(X_initial, A, indices, kind = "out")
+    MSE_all_initial = compute_MSE(X_initial, A, indices, kind = "all")
+    altmin_end_time = time()
+    (verbosity ≥ 1) && add_message!(printlist, [
+        "Alternating minimization completed: $(altmin_root_n_iters) runs.\n",
+        @sprintf("Time:                %3.3f s.\n", altmin_end_time - altmin_start_time),
+        @sprintf("Solution:            %10f\n", objective_initial),
+        @sprintf("MSE (in/out):       (%6.4f, %6.4f)\n", MSE_in_initial, MSE_out_initial),
+        "------------------------------------------------------------------------------------------------\n",
+        "\n",
+    ])
+
+    objective_initial_time_found = time() - start_time
     solution = Dict(
         "objective_initial" => objective_initial,
+        "objective_initial_time_found" => objective_initial_time_found,
         "MSE_in_initial" => MSE_in_initial,
         "MSE_out_initial" => MSE_out_initial,
         "MSE_all_initial" => MSE_all_initial,
@@ -655,6 +611,7 @@ function branchandbound_frob_matrixcomp(
         "U_initial" => U_initial,
         "X_initial" => X_initial,
         "objective" => objective_initial,
+        "objective_time_found" => objective_initial_time_found,
         "MSE_in" => MSE_in_initial,
         "MSE_out" => MSE_out_initial,
         "MSE_all" => MSE_all_initial,
@@ -667,8 +624,6 @@ function branchandbound_frob_matrixcomp(
         ranges = Tuple{Int, Matrix{Float64}, Matrix{Float64}}[]
     end
     nodes = Dict{Int, BBNode}()
-    upper = objective_initial
-    lower = -Inf
     U_lower_initial = -ones(n, k)
     # Symmetry-breaking constraints
     for i in 1:k
@@ -678,149 +633,103 @@ function branchandbound_frob_matrixcomp(
     initial_node = BBNode(
         U_lower = U_lower_initial, 
         U_upper = U_upper_initial, 
-        LB = lower,
+        LB = -Inf,
         depth = 0,
         node_id = 1,
         parent_id = 0,
     )
 
-    if !noise
-        if add_basis_pursuit_valid_inequalities
-            if presolve
-                # compute indices for valid inequalities
-                if k == 1
-                    # Optimized version
-                    initial_node.linear_coupling_constraints_indexes = generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved)
-                elseif k == 2
-                    # Optimized version
-                    initial_node.linear_coupling_constraints_indexes = generate_rank2_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved)
-                else
-                    initial_node.linear_coupling_constraints_indexes = generate_rankk_basis_pursuit_linear_coupling_constraints_indexes(indices_presolved, k)
-                end
-            else
-                error("""
-                `add_basis_pursuit_valid_inequalities` only currently implemented together with `presolve`.
-                """)
-            end
-        else
-            initial_node.linear_coupling_constraints_indexes = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
-        end
+    if use_disjunctive_cuts
+        initial_node.disjunctive_cuts = BBNodeDisjunctiveCuts()
     end
 
-    if (add_Shor_valid_inequalities && !add_Shor_valid_inequalities_iterative)
-        if !noise
-            # Assuming presolve is done:
-            initial_node.Shor_constraints_indexes = generate_rank1_basis_pursuit_Shor_constraints_indexes(indices_presolved, 1)
-            initial_node.Shor_constraints_indexes = randsubseq(
-                initial_node.Shor_constraints_indexes,
-                add_Shor_valid_inequalities_fraction,
-            )
-            Shor_non_SOC_constraints_indexes = unique(vcat(
-                [
-                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
-                    for (i1, i2, j1, j2) in initial_node.Shor_constraints_indexes
-                ]...
-            ))
-            initial_node.Shor_SOC_constraints_indexes = setdiff(
-                vec(collect(Iterators.product(1:n, 1:m))), 
-                Shor_non_SOC_constraints_indexes,
-                [(x[1], x[2]) for x in findall(indices_presolved)]
-            )
-        else
-            initial_node.Shor_constraints_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(
-                indices_presolved, 
+    if add_Shor_valid_inequalities
+        if !add_Shor_valid_inequalities_iterative
+            initial_node_Shor_constraints_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(
+                indices, 
                 Shor_valid_inequalities_noisy_rank1_num_entries_present
             )
-            initial_node.Shor_constraints_indexes = randsubseq(
-                initial_node.Shor_constraints_indexes,
+            initial_node_Shor_constraints_indexes = randsubseq(
+                initial_node_Shor_constraints_indexes,
                 add_Shor_valid_inequalities_fraction,
             )
             Shor_non_SOC_constraints_indexes = unique(vcat(
                 [
                     [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
-                    for (i1, i2, j1, j2) in initial_node.Shor_constraints_indexes
+                    for (i1, i2, j1, j2) in initial_node_Shor_constraints_indexes
                 ]...
             ))
-            initial_node.Shor_SOC_constraints_indexes = setdiff(
+            initial_node_Shor_SOC_constraints_indexes = setdiff(
                 vec(collect(Iterators.product(1:n, 1:m))), 
                 Shor_non_SOC_constraints_indexes
             )
+            initial_node.Shor_info = BBNodeShorInfo(
+                constraints_indexes = initial_node_Shor_constraints_indexes,
+                SOC_constraints_indexes = initial_node_Shor_SOC_constraints_indexes,
+            )
+        else # add_Shor_valid_inequalities_iterative
+            initial_node.Shor_info = BBNodeShorInfo(
+                constraints_indexes = NTuple{4, Int}[],
+                SOC_constraints_indexes = vec(collect(Iterators.product(1:n, 1:m))),
+            )
         end
-    elseif (add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative)
-        initial_node.Shor_constraints_indexes = NTuple{4, Int}[]
-        Shor_non_SOC_constraints_indexes = Tuple{Int, Int}[]
-        initial_node.Shor_SOC_constraints_indexes = vec(collect(Iterators.product(1:n, 1:m)))
-    elseif (!add_Shor_valid_inequalities && add_Shor_valid_inequalities_iterative)
-        error("""
-        Setting `add_Shor_valid_inequalities_iterative` to `true`
-        requires `add_Shor_valid_inequalities` to be `true`.
-        """)
-    else
-        initial_node.Shor_constraints_indexes = NTuple{4, Int}[]
-        Shor_non_SOC_constraints_indexes = Tuple{Int, Int}[]
-        initial_node.Shor_SOC_constraints_indexes = Tuple{Int, Int}[]
     end
 
     nodes[1] = initial_node
 
-    add_message!(printlist, String[
-        "-----------------------------------------------------------------------------------\n",
-        "|   Explored |      Total |      Lower |      Upper |        Gap |    Runtime (s) |\n",
-        "-----------------------------------------------------------------------------------\n",
+    (verbosity ≥ 1) && add_message!(printlist, String[
+        "------------------------------------------------------------------------------------------------\n",
+        "|   Explored |      Total |  Remaining |      Lower |      Upper |        Gap |    Runtime (s) |\n",
+        "------------------------------------------------------------------------------------------------\n",
     ])
 
     # leaves' mapping from node_id to lower_bound
-    lower_bounds = PriorityQueue([1=>Inf])
-    node_ids = [1]
-    minimum_lower_bounds = Inf
-    ancestry = Dict{Int, Vector{Int}}()
+    tree = BBTree(
+        nodes = nodes,
+        node_ids = [1],
+        counter = counter,
+        nodes_explored = nodes_explored,
+        last_updated_counter = last_updated_counter,
+        nodes_remaining = 1,
+        best_upper_bound = objective_initial,
+        best_lower_bound = -Inf,
+        now_gap = Inf,
+        lower_bounds = PriorityQueue([1=>Inf]),
+    )
 
     while (
-        now_gap > gap 
-        && !(use_max_steps && (counter ≥ max_steps))
+        tree.now_gap > gap 
+        && !(use_max_steps && (tree.counter ≥ max_steps))
         && time() - start_time ≤ time_limit
     )
-        if length(nodes) != 0
-            if node_selection == "bestfirst_depthfirst"
-                if length(nodes) > bestfirst_depthfirst_cutoff
-                    node_selection_here = "depthfirst"
-                else
-                    node_selection_here = "bestfirst"
-                end
-            else
-                node_selection_here = node_selection
-            end
-
-            if node_selection_here == "breadthfirst"
-                id = popfirst!(node_ids)
-                delete!(lower_bounds, id)
-                current_node = pop!(nodes, id)
-            elseif node_selection_here == "bestfirst"
-                id = dequeue!(lower_bounds)
-                deleteat!(node_ids, findfirst(isequal(id), node_ids))
-                current_node = pop!(nodes, id)
-            elseif node_selection_here == "depthfirst" # NOTE: may not work well
-                id = pop!(node_ids)
-                delete!(lower_bounds, id)
-                current_node = pop!(nodes, id)
-            end
-            nodes_explored += 1
-        else
+        if length(tree.nodes) == 0
             break
         end
+
+        if node_selection == "bestfirst_depthfirst"
+            if length(tree.nodes) > bestfirst_depthfirst_cutoff
+                node_selection_here = "depthfirst"
+            else
+                node_selection_here = "bestfirst"
+            end
+        else
+            node_selection_here = node_selection
+        end
+
+        current_node = retrieve_node_from_tree!(tree, node_selection_here)
 
         split_flag = true
 
         # possible, since we may not explore tree breadth-first
         # (should not be possible for breadth-first search)
-        if current_node.LB > solution["objective"]
+        if current_node.LB > tree.best_upper_bound
             split_flag = false
             nodes_dominated += 1
         end
 
         if !use_disjunctive_cuts && split_flag
-            relax_feasibility_result = @suppress relax_feasibility_frob_matrixcomp(
-                n, k, A, indices, noise;
+            relax_feasibility_result = @suppress matrix_completion_check_SDP_relaxation_feasibility(
+                n, k, A, indices;
                 U_lower = current_node.U_lower, 
                 U_upper = current_node.U_upper,
                 time_limit = time_limit,
@@ -835,61 +744,22 @@ function branchandbound_frob_matrixcomp(
         # solve SDP relaxation of master problem
         if split_flag
             if use_disjunctive_cuts
-                if !noise
-                    relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
-                        disjunctive_cuts_type = disjunctive_cuts_type,
-                        add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
-                        linear_coupling_constraints_indexes = current_node.linear_coupling_constraints_indexes,
-                        add_Shor_valid_inequalities = add_Shor_valid_inequalities,
-                        Shor_constraints_indexes = current_node.Shor_constraints_indexes,
-                        Shor_SOC_constraints_indexes = current_node.Shor_SOC_constraints_indexes,
-                        matrix_cuts = current_node.matrix_cuts,
-                        solver = (current_node.node_id > 1 ? SDP_child_node_solver : SDP_root_node_solver),
-                        use_FOM_warm_start = FOM_warm_start && (current_node.node_id > 1),
-                        store_FOM_warm_start = FOM_warm_start,
-                        FOM_warm_start_results = current_node.FOM_warm_start_results,
-                        SCS_eps_rel = SCS_eps_rel,
-                        SCS_eps_abs = SCS_eps_abs,
-                        SCS_eps_infeas = SCS_eps_infeas,
-                        time_limit = time_limit,
-                    )
-                else
-                    relax_result = @suppress relax_frob_matrixcomp(
-                        n, k, A, indices, indices_presolved, γ, λ, noise, use_disjunctive_cuts;
-                        disjunctive_cuts_type = disjunctive_cuts_type,
-                        add_basis_pursuit_valid_inequalities = false,
-                        add_Shor_valid_inequalities = add_Shor_valid_inequalities,
-                        Shor_constraints_indexes = current_node.Shor_constraints_indexes,
-                        Shor_SOC_constraints_indexes = current_node.Shor_SOC_constraints_indexes,
-                        matrix_cuts = current_node.matrix_cuts,
-                        solver = (current_node.node_id > 1 ? SDP_child_node_solver : SDP_root_node_solver),
-                        use_FOM_warm_start = FOM_warm_start && (current_node.node_id > 1),
-                        store_FOM_warm_start = FOM_warm_start,
-                        FOM_warm_start_results = current_node.FOM_warm_start_results,
-                        SCS_eps_rel = SCS_eps_rel,
-                        SCS_eps_abs = SCS_eps_abs,
-                        SCS_eps_infeas = SCS_eps_infeas,
-                        time_limit = time_limit,
-                    )
-                end
+                relax_result = matrix_completion_SDP_relaxation(
+                    current_node,
+                    n, k, A, indices, γ, use_disjunctive_cuts;
+                    disjunctive_cuts_type = disjunctive_cuts_type,
+                    add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+                    time_limit = Int(round(time_limit - (time() - start_time))),
+                    solver_output = (verbosity ≥ 4 ? 1 : 0),
+                )
             else
-                if noise 
-                    add_basis_pursuit_valid_inequalities = false
-                end
-                relax_result = @suppress relax_frob_matrixcomp(
-                    n, k, A, indices, indices_presolved, γ, λ, noise, false; 
+                relax_result = matrix_completion_SDP_relaxation(
+                    current_node,
+                    n, k, A, indices, γ, false; 
                     U_lower = current_node.U_lower, 
                     U_upper = current_node.U_upper,
-                    add_basis_pursuit_valid_inequalities = add_basis_pursuit_valid_inequalities,
-                    solver = (current_node.node_id > 1 ? SDP_child_node_solver : SDP_root_node_solver),
-                    use_FOM_warm_start = FOM_warm_start && (current_node.node_id > 1),
-                    store_FOM_warm_start = FOM_warm_start,
-                    FOM_warm_start_results = current_node.FOM_warm_start_results,
-                    SCS_eps_rel = SCS_eps_rel,
-                    SCS_eps_abs = SCS_eps_abs,
-                    SCS_eps_infeas = SCS_eps_infeas,
-                    time_limit = time_limit,
+                    time_limit = Int(round(time_limit - (time() - start_time))),
+                    solver_output = (verbosity ≥ 4 ? 1 : 0),
                 )
             end
             solve_time_relaxation += relax_result["solve_time"]
@@ -901,27 +771,30 @@ function branchandbound_frob_matrixcomp(
                     relax_result["solve_time"],
                 ]
             )
-            if relax_result["feasible"] == false # should not happen, since this should be checked by relax_feasibility_frob_matrixcomp
+            if current_node.node_id == 1
+                instance["run_details"]["root_node_timeout"] = (relax_result["termination_status"] == MOI.TIME_LIMIT)
+            end
+            if relax_result["feasible"] == false # should not happen, since this should be checked by matrix_completion_check_SDP_relaxation_feasibility
                 nodes_relax_infeasible += 1
                 split_flag = false
             elseif relax_result["termination_status"] in [
                 MOI.OPTIMAL,
-                MOI.LOCALLY_SOLVED, # TODO: investigate this
-                MOI.SLOW_PROGRESS, # TODO: investigate this
+                MOI.LOCALLY_SOLVED,
+                MOI.SLOW_PROGRESS,
                 MOI.TIME_LIMIT,
             ]
                 nodes_relax_feasible += 1
                 objective_relax = relax_result["objective"]
+                current_node.LB = objective_relax
                 Y_relax = relax_result["Y"]
                 U_relax = relax_result["U"]
                 X_relax = relax_result["X"]
                 Θ_relax = relax_result["Θ"]
-                α_relax = relax_result["α"]
                 if current_node.node_id == 1
-                    lower = objective_relax
+                    tree.best_lower_bound = objective_relax
                 end
                 # if solution for relax_result has higher objective than best found so far: prune the node
-                if objective_relax > solution["objective"]
+                if objective_relax > tree.best_upper_bound
                     nodes_relax_feasible_pruned += 1
                     split_flag = false            
                 end
@@ -931,29 +804,56 @@ function branchandbound_frob_matrixcomp(
         # if solution for relax_result is feasible for original problem:
         # prune this node;
         # if it is the best found so far, update solution
-        if split_flag
-            if master_problem_frob_matrixcomp_feasible(Y_relax, U_relax, X_relax, Θ_relax, use_disjunctive_cuts)
+        if (
+            split_flag 
+            && relax_result["termination_status"] in [
+                MOI.OPTIMAL,
+                MOI.LOCALLY_SOLVED, 
+            ]
+        )
+            if matrix_completion_master_feasible(Y_relax, U_relax, X_relax, Θ_relax, use_disjunctive_cuts)
                 current_node.master_feasible = true
                 nodes_master_feasible += 1
                 # if best found so far, update solution
-                if objective_relax < solution["objective"]
+                if objective_relax < tree.best_upper_bound
                     nodes_master_feasible_improvement += 1
-                    solution["objective"] = objective_relax
-                    upper = objective_relax
-                    solution["Y"] = copy(Y_relax)
-                    solution["U"] = copy(U_relax)
-                    solution["X"] = copy(X_relax)
-                    now_gap = add_update!(
-                        printlist, instance, nodes_explored, counter, lower, upper, start_time,
+                    update_solution!(
+                        solution,
+                        objective_relax,
+                        (time() - start_time),
+                        Y_relax,
+                        U_relax,
+                        X_relax,
                     )
-                    last_updated_counter = counter
+                    tree.best_upper_bound = objective_relax
+                    add_update!(
+                        printlist, instance, tree, 
+                        (time() - start_time),
+                        ;
+                        print_message = (verbosity ≥ 1),
+                    )
                 end
                 split_flag = false
             end
+        elseif (
+            split_flag 
+            && relax_result["termination_status"] in [
+                MOI.TIME_LIMIT,
+            ]
+        )
+            add_update!(
+                printlist, instance, tree, 
+                (time() - start_time),
+                ;
+                print_message = (verbosity ≥ 1),
+            )
+            verbosity ≥ 1 && add_message!(printlist, [
+                "Time limit reached.\n"
+            ])
         end
 
         # perform alternating minimization heuristic
-        if altmin_flag && noise # only perform alternating minimization in the noisy setting
+        if altmin_flag
             altmin_probability = (
                 current_node.depth > log(
                     altmin_probability_decay_rate, 
@@ -972,22 +872,29 @@ function branchandbound_frob_matrixcomp(
             if altmin_flag_now
                 U_rounded = svd(relax_result["Y"]).U[:,1:k] # NOTE: need not be in disjunctive regions for $U$
                 if use_disjunctive_cuts
-                    altmin_results_BB = @suppress alternating_minimization(
-                        A, n, k, indices, γ, λ, use_disjunctive_cuts;
+                    altmin_results_BB = alternating_minimization(
+                        A, n, k, indices, γ, use_disjunctive_cuts;
                         disjunctive_cuts_type = disjunctive_cuts_type,
                         U_initial = Matrix(U_rounded),
-                        matrix_cuts = current_node.matrix_cuts,
+                        disjunctive_cuts = current_node.disjunctive_cuts.cuts,
                         time_limit = time_limit,
                     )
                 else
-                    altmin_results_BB = @suppress alternating_minimization(
-                        A, n, k, indices, γ, λ, use_disjunctive_cuts;
+                    altmin_results_BB = alternating_minimization(
+                        A, n, k, indices, γ, use_disjunctive_cuts;
                         U_initial = Matrix(U_rounded),
                         U_lower = current_node.U_lower,
                         U_upper = current_node.U_upper,
                         time_limit = time_limit,
                     )
                 end
+                alternating_minimization_printout(
+                    printlist, 
+                    altmin_results_BB,
+                    current_node.node_id, 
+                    altmin_probability,
+                    verbosity,
+                )
                 nodes_relax_feasible_split_altmin += 1
                 solve_time_altmin += altmin_results_BB["solve_time"]
                 push!(
@@ -1016,21 +923,26 @@ function branchandbound_frob_matrixcomp(
                     Y_local = U_local * U_local'
                     # guaranteed to be a projection matrix since U_local is a svd result
                     objective_local = evaluate_objective(
-                        X_local, A, indices, U_local, γ, λ, noise
+                        X_local, A, indices, U_local, γ, 
                     )
-                    if objective_local < solution["objective"]
+                    if objective_local < tree.best_upper_bound
                         nodes_relax_feasible_split_altmin_improvement += 1
-                        solution["objective"] = objective_local
-                        upper = objective_local
-                        solution["Y"] = copy(Y_local)
-                        solution["U"] = copy(U_local)
-                        solution["X"] = copy(X_local)
-                        now_gap = add_update!(
-                            printlist, instance, nodes_explored, counter, lower, upper, start_time,
+                        update_solution!(
+                            solution, 
+                            objective_local, 
+                            (time() - start_time),
+                            Y_local,
+                            U_local,
+                            X_local,
+                        )
+                        tree.best_upper_bound = objective_local
+                        add_update!(
+                            printlist, instance, tree, 
+                            (time() - start_time),
                             ; 
                             altmin_flag = true,
+                            print_message = (verbosity ≥ 1),
                         )
-                        last_updated_counter = counter
                     end
                 end
             end
@@ -1062,79 +974,28 @@ function branchandbound_frob_matrixcomp(
                     disjunctive_cuts_breakpoints,
                     ;
                     relax_result = relax_result,
-                    indices = indices_presolved,
-                    counter = counter,
+                    indices = indices,
+                    counter = tree.counter,
                     objective_relax = objective_relax,
                     update_Shor_indices_flag = update_Shor_indices_flag_now,
                     Shor_valid_inequalities_noisy_rank1_num_entries_present = Shor_valid_inequalities_noisy_rank1_num_entries_present,
                     n_minors = update_Shor_indices_n_minors,
                 )
-                merge!(
-                    nodes, 
-                    Dict(
-                        (counter + i) => node
-                        for (i, node) in enumerate(matrix_cut_child_nodes)
-                    )
+                add_nodes_to_tree!(
+                    tree,
+                    matrix_cut_child_nodes,
+                    objective_relax,
+                    current_node.node_id,
                 )
-                new_node_ids = collect(counter+1:counter+length(matrix_cut_child_nodes))
-                append!(node_ids, new_node_ids)
-                for id in new_node_ids
-                    enqueue!(lower_bounds, id => objective_relax)
-                end
-                ancestry[current_node.node_id] = new_node_ids
-                counter += length(matrix_cut_child_nodes)
             else
-                # preliminaries: defaulting to branching_type
-                
+                ## McCormick branching
+
                 # finding coordinates (i, j) to branch on
-                if (
-                    branching_type == "lexicographic"
-                    ||
-                    any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
-                )
-                    (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
-                elseif branching_type == "bounds" # TODO: UNTESTED
-                    (_, ind) = findmin(
-                        min.(
-                            current_node.U_upper - U_relax,
-                            U_relax - current_node.U_lower,
-                        ) ./ (
-                            current_node.U_upper - current_node.U_lower
-                        )
-                    )
-                elseif branching_type == "gradient"
-                    deriv_U = - γ * α_relax * α_relax' * U_relax # shape: (n, k)
-                    deriv_U_change = zeros(n,k)
-                    for i in 1:n, j in 1:k
-                        if deriv_U[i,j] < 0.0
-                            deriv_U_change[i,j] = deriv_U[i,j] * (
-                                current_node.U_upper[i,j] - U_relax[i,j]
-                            )
-                        else
-                            deriv_U_change[i,j] = deriv_U[i,j] * (
-                                current_node.U_lower[i,j] - U_relax[i,j]
-                            )
-                        end
-                    end
-                    (_, ind) = findmin(deriv_U_change)
-                end
-                # finding branch_val)
-                if any((current_node.U_upper .< 0.0) .| (current_node.U_lower .> 0.0))
-                    diff = current_node.U_upper[ind] - current_node.U_lower[ind]
-                    branch_val = current_node.U_lower[ind] + diff / 2
-                elseif branching_type == "bounds" # custom branch_point
-                    if (current_node.U_upper[ind] - U_relax[ind] <
-                        U_relax[ind] - current_node.U_lower[ind])
-                        branch_val = U_relax[ind] - (current_node.U_upper[ind] - U_relax[ind])
-                    else
-                        branch_val = U_relax[ind] + (U_relax[ind] - current_node.U_lower[ind])
-                    end
-                elseif branch_point == "midpoint"
-                    diff = current_node.U_upper[ind] - current_node.U_lower[ind]
-                    branch_val = current_node.U_lower[ind] + diff / 2
-                elseif branch_point == "current_point"
-                    branch_val = U_relax[ind]
-                end
+                (_, ind) = findmax(current_node.U_upper - current_node.U_lower)
+                
+                # finding branch_val
+                diff = current_node.U_upper[ind] - current_node.U_lower[ind]
+                branch_val = current_node.U_lower[ind] + diff / 2
                 # constructing child nodes
                 U_lower_left = current_node.U_lower
                 U_upper_left = copy(current_node.U_upper)
@@ -1143,89 +1004,71 @@ function branchandbound_frob_matrixcomp(
                 U_lower_right[ind] = branch_val
                 U_upper_right = current_node.U_upper
                 left_child_node = BBNode(
+                    node_id = tree.counter + 1,
+                    parent_id = current_node.node_id,
                     U_lower = U_lower_left,
                     U_upper = U_upper_left,
                     # initialize a node's LB with the objective of relaxation of parent
                     LB = objective_relax,
                     depth = current_node.depth + 1,
-                    node_id = counter + 1,
-                    parent_id = current_node.node_id,
-                    FOM_warm_start_results = relax_result,
                 )
                 right_child_node = BBNode(
+                    node_id = tree.counter + 2,
+                    parent_id = current_node.node_id,
                     U_lower = U_lower_right,
                     U_upper = U_upper_right,
                     # initialize a node's LB with the objective of relaxation of parent
                     LB = objective_relax,
-                    node_id = counter + 2,
                     depth = current_node.depth + 1,
-                    parent_id = current_node.node_id,
-                    FOM_warm_start_results = relax_result,
                 )
-                merge!(
-                    nodes, 
-                    Dict(
-                        counter + 1 => left_child_node,
-                        counter + 2 => right_child_node,
-                    )
+                add_nodes_to_tree!(
+                    tree,
+                    [left_child_node, right_child_node],
+                    objective_relax,
+                    current_node.node_id,
                 )
-                append!(node_ids, [counter + 1, counter + 2])
-                enqueue!(lower_bounds, counter + 1 => objective_relax)
-                enqueue!(lower_bounds, counter + 2 => objective_relax)
-                ancestry[current_node.node_id] = [counter + 1, counter + 2]
-                counter += 2
             end
         end
 
         # cleanup actions - to be done regardless of whether split_flag was true or false
-        if current_node.node_id != 1
-            ancestry[current_node.parent_id] = setdiff(ancestry[current_node.parent_id], [current_node.node_id])
-            if length(ancestry[current_node.parent_id]) == 0
-                delete!(ancestry, current_node.parent_id)
-            end
-        end
+
+        # Remove nodes that have bad bounds
+        prune_dominated_nodes!(tree)
 
         # update minimum of lower bounds
-        if length(lower_bounds) == 0
-            now_gap = add_update!(
-                printlist, instance, nodes_explored, counter, 
-                lower, upper, start_time,
-            )
-            last_updated_counter = counter
-        else
-            _, minimum_lower_bounds = peek(lower_bounds)
-            if minimum_lower_bounds > lower
-                lower = minimum_lower_bounds
-                now_gap = add_update!(
-                    printlist, instance, nodes_explored, counter, 
-                    lower, upper, start_time,
-                )
-                last_updated_counter = counter
-            elseif (
-                current_node.node_id == 1 
-                || (counter ÷ update_step) > (last_updated_counter ÷ update_step)
-                || now_gap ≤ gap 
-                || (use_max_steps && counter ≥ max_steps)
-                || time() - start_time > time_limit
-            )
-                now_gap = add_update!(
-                    printlist, instance, nodes_explored, counter, 
-                    lower, upper, start_time,
-                )
-                last_updated_counter = counter
+        lower_bounds_updated = update_tree_lower_bounds!(tree)
 
-                if !use_disjunctive_cuts
-                    item = (
-                        current_node.node_id,
-                        current_node.U_lower,
-                        current_node.U_upper,
-                    )
-                    push!(ranges, item)
-                end
-                if root_only
-                    break
-                end
-            end
+        # print update
+        if (
+            lower_bounds_updated
+            || current_node.node_id == 1 
+            || (tree.counter ÷ update_step) > (tree.last_updated_counter ÷ update_step)
+            || tree.now_gap ≤ gap 
+            || (use_max_steps && tree.counter ≥ max_steps)
+            || time() - start_time > time_limit
+        )
+            print_update_here = (verbosity ≥ 1)
+        else
+            print_update_here = (verbosity ≥ 3)
+        end
+        add_update!(
+            printlist, instance, tree, 
+            (time() - start_time),
+            ;
+            print_message = print_update_here,
+        )
+
+        if !use_disjunctive_cuts
+            item = (
+                current_node.node_id,
+                current_node.U_lower,
+                current_node.U_upper,
+            )
+            push!(ranges, item)
+        end
+
+        if root_only
+            break
         end
     end
 
@@ -1245,8 +1088,8 @@ function branchandbound_frob_matrixcomp(
     instance["run_details"]["solve_time_relaxation"] = solve_time_relaxation
     instance["run_details"]["dict_solve_times_relaxation"] = dict_solve_times_relaxation
 
-    instance["run_details"]["nodes_explored"] = nodes_explored
-    instance["run_details"]["nodes_total"] = counter
+    instance["run_details"]["nodes_explored"] = tree.nodes_explored
+    instance["run_details"]["nodes_total"] = tree.counter
     instance["run_details"]["nodes_dominated"] = nodes_dominated
     instance["run_details"]["nodes_relax_infeasible"] = nodes_relax_infeasible
     instance["run_details"]["nodes_relax_feasible"] = nodes_relax_feasible
@@ -1257,8 +1100,8 @@ function branchandbound_frob_matrixcomp(
     instance["run_details"]["nodes_relax_feasible_split_altmin"] = nodes_relax_feasible_split_altmin
     instance["run_details"]["nodes_relax_feasible_split_altmin_improvement"] = nodes_relax_feasible_split_altmin_improvement
 
-    add_message!(printlist, String["\n\nRun details:\n"])
-    add_message!(printlist, String[
+    (verbosity ≥ 1) && add_message!(printlist, String["\n\nRun details:\n"])
+    (verbosity ≥ 1) && add_message!(printlist, String[
         if startswith(k, "nodes")
             Printf.@sprintf("%46s: %10d\n", k, v)
         elseif startswith(k, "time") || startswith(k, "solve_time")
@@ -1269,10 +1112,11 @@ function branchandbound_frob_matrixcomp(
             Printf.@sprintf("%46s: %s\n", k, v)
         end
         for (k, v) in instance["run_details"]
+            if !(k in ["A", "indices"])
     ])
     if !use_disjunctive_cuts
         for item in ranges
-            add_message!(printlist, String[
+            (verbosity ≥ 1) && add_message!(printlist, String[
                 Printf.@sprintf("\n\nnode_id: %10d\n", item[1]),
                 "\nU_lower:\n",
                 sprint(show, "text/plain", item[2]),
@@ -1281,7 +1125,7 @@ function branchandbound_frob_matrixcomp(
             ])               
         end
     end
-    add_message!(printlist, String[
+    (verbosity ≥ 1) && add_message!(printlist, String[
         "\n--------------------------------\n",
         "\n\nInitial solution (warm start):\n",
         sprint(show, "text/plain", objective_initial),
@@ -1289,29 +1133,118 @@ function branchandbound_frob_matrixcomp(
         sprint(show, "text/plain", MSE_in_initial),
         "\n\nMSE of unsampled entries (warm start):\n",
         sprint(show, "text/plain", MSE_out_initial),
-        "\n\nU:\n",
-        sprint(show, "text/plain", solution["U"]),
-        "\n\nY:\n",
-        sprint(show, "text/plain", solution["Y"]),
-        "\n\nX:\n",
-        sprint(show, "text/plain", solution["X"]),
-        "\n\nA:\n",
-        sprint(show, "text/plain", A),
-        "\n\nindices:\n",
-        sprint(show, "text/plain", indices),
         "\n\nBest incumbent solution:\n",
         sprint(show, "text/plain", solution["objective"]),
         "\n\nMSE of sampled entries:\n",
         sprint(show, "text/plain", solution["MSE_in"]),
         "\n\nMSE of unsampled entries:\n",
         sprint(show, "text/plain", solution["MSE_out"]),
+        "\n\n\n",
     ])
 
     return solution, printlist, instance
 end
 
+
+function update_solution!(
+    solution::Dict{String, Any},
+    objective_now::Float64,
+    time_found::Float64,
+    Y_now::Matrix{Float64},
+    U_now::Matrix{Float64},
+    X_now::Matrix{Float64},
+)
+    solution["objective"] = objective_now
+    solution["objective_time_found"] = time_found
+    solution["Y"] = copy(Y_now)
+    solution["U"] = copy(U_now)
+    solution["X"] = copy(X_now)
+end
+
+function retrieve_node_from_tree!(
+    tree::BBTree,
+    node_selection_here::String,
+)
+    if node_selection_here == "breadthfirst"
+        id = popfirst!(tree.node_ids)
+        delete!(tree.lower_bounds, id)
+    elseif node_selection_here == "bestfirst"
+        id = dequeue!(tree.lower_bounds)
+        deleteat!(tree.node_ids, findfirst(isequal(id), tree.node_ids))
+    elseif node_selection_here == "depthfirst" # NOTE: may not work well
+        id = pop!(tree.node_ids)
+        delete!(tree.lower_bounds, id)
+    end
+    current_node = pop!(tree.nodes, id)
+    tree.nodes_explored += 1
+    tree.nodes_remaining -= 1
+    return current_node
+end
+
+
+function add_nodes_to_tree!(
+    tree::BBTree,
+    child_nodes::Vector{BBNode},
+    parent_objective::Float64,
+    parent_node_id::Int,
+)
+    merge!(
+        tree.nodes, 
+        Dict(
+            (tree.counter + i) => node
+            for (i, node) in enumerate(child_nodes)
+        )
+    )
+    new_node_ids = collect(tree.counter+1:tree.counter+length(child_nodes))
+    append!(tree.node_ids, new_node_ids)
+    for id in new_node_ids
+        enqueue!(tree.lower_bounds, id => parent_objective)
+    end
+    tree.counter += length(child_nodes)
+    tree.nodes_remaining += length(child_nodes)
+end
+
+function update_tree_lower_bounds!(tree::BBTree)
+    if length(tree.lower_bounds) == 0
+        return true
+    end
+    _, minval = peek(tree.lower_bounds)
+    updated = false
+    if minval > tree.best_lower_bound
+        tree.best_lower_bound = minval
+        updated = true
+    end
+    return updated
+end
+
+function prune_dominated_nodes!(tree::BBTree)
+    new_lower_bounds = PriorityQueue{Int, Float64}()
+    removed_node_ids = Int[]
+    while !isempty(tree.lower_bounds)
+        (node_id, lower_bound) = dequeue_pair!(tree.lower_bounds)
+        if lower_bound > tree.best_upper_bound
+            push!(removed_node_ids, node_id)
+            for (node_id_, _) in tree.lower_bounds
+                push!(removed_node_ids, node_id_)
+            end
+            break
+        end
+        new_lower_bounds[node_id] = lower_bound
+    end
+    tree.lower_bounds = new_lower_bounds
+
+    for node_id in removed_node_ids
+        delete!(tree.nodes, node_id)
+    end
+    
+    tree.node_ids = setdiff(tree.node_ids, removed_node_ids)
+    tree.nodes_remaining = length(tree.nodes)
+    
+    return
+end
+
 """
-    master_problem_frob_matrixcomp_feasible(
+    matrix_completion_master_feasible(
         Y::Matrix{Float64}, 
         U::Matrix{Float64}, 
         X::Matrix{Float64}, 
@@ -1325,7 +1258,7 @@ end
 
 Determine if `(Y, U, X, Θ)` is feasible for the master problem.
 """
-function master_problem_frob_matrixcomp_feasible(
+function matrix_completion_master_feasible(
     Y::Matrix{Float64}, 
     U::Matrix{Float64}, 
     X::Matrix{Float64}, 
@@ -1358,12 +1291,11 @@ function master_problem_frob_matrixcomp_feasible(
     end
 end
 
-function relax_feasibility_frob_matrixcomp( # this is the version without matrix_cuts
+function matrix_completion_check_SDP_relaxation_feasibility( # this is the version without disjunctive_cuts
     n::Int,
     k::Int,
     A::Array{Float64, 2},
     indices::BitMatrix,
-    noise::Bool,
     ;
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
@@ -1394,6 +1326,7 @@ function relax_feasibility_frob_matrixcomp( # this is the version without matrix
     model = Model(Mosek.Optimizer)
     set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
+    set_optimizer_attribute(model, "MSK_IPAR_MAX_NUM_WARNINGS", 0)
     set_time_limit_sec(model, time_limit)
 
     @variable(model, U[1:n, 1:k])
@@ -1495,23 +1428,17 @@ function relax_feasibility_frob_matrixcomp( # this is the version without matrix
     )
 end
 
-function relax_frob_matrixcomp(
+function matrix_completion_SDP_relaxation(
+    node::BBNode,
     n::Int,
     k::Int,
     A::Array{Float64,2},
     indices::BitMatrix, # for objective computation
-    indices_presolved::BitMatrix, # for coupling constraints, in the noiseless case
     γ::Float64,
-    λ::Float64,
-    noise::Bool,
     use_disjunctive_cuts::Bool,
     ;
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
-    add_basis_pursuit_valid_inequalities::Bool = false,
-    linear_coupling_constraints_indexes::Vector{Tuple{Vector{Int}, Vector{Int}, String, Int}} = Tuple{Vector{Int}, Vector{Int}, String, Int}[],
     add_Shor_valid_inequalities::Bool = false,
-    Shor_constraints_indexes::Vector{NTuple{4, Int}} = NTuple{4, Int}[],
-    Shor_SOC_constraints_indexes::Vector{Tuple{Int, Int}} = Tuple{Int, Int}[],
     U_lower::Array{Float64,2} = begin
         U_lower = -ones(n,k)
         for i in 1:k
@@ -1520,41 +1447,10 @@ function relax_frob_matrixcomp(
         U_lower
     end,
     U_upper::Array{Float64,2} = ones(n,k),
-    matrix_cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[],
     orthogonality_tolerance::Float64 = 0.0,
-    solver::String = "Mosek",
-    use_FOM_warm_start::Bool = false,
-    store_FOM_warm_start::Bool = false,
-    FOM_warm_start_results::Dict{String, Any} = Dict{String, Any}(),
-    SCS_eps_rel::Float64 = 1e-8, # Mosek default
-    SCS_eps_abs::Float64 = 1e-8, # Mosek default
-    SCS_eps_infeas::Float64 = 1e-12, # Mosek default
     solver_output::Int = 0,
     time_limit::Int = 3600, # forces Mosek to not use a time limit
 )
-    # TODO: only for noisy case: remove?
-    function compute_α(Y, γ, A, indices)
-        (n, m) = size(A)
-        α = zeros(size(A))
-        for j in 1:m
-            for i in 1:n
-                if indices[i,j]
-                    α[i,j] = (
-                        - γ * sum(
-                            Y[i,l] * A[l,j] * indices[l,j]
-                            for l in 1:n
-                        )
-                    ) / (
-                        1 + γ * sum(
-                            Y[i,l] * indices[l,j]
-                            for l in 1:n
-                        )
-                    ) + A[i,j]
-                end
-            end    
-        end
-        return α
-    end
 
     if use_disjunctive_cuts
         if !(disjunctive_cuts_type in ["linear", "linear2", "linear3"])
@@ -1569,70 +1465,47 @@ function relax_frob_matrixcomp(
     if !(
         size(U_lower) == (n,k)
         && size(U_upper) == (n,k)
-        && size(A, 1) == size(indices, 1) == size(indices_presolved, 1) == n
-        && size(A, 2) == size(indices, 2) == size(indices_presolved, 2) 
+        && size(A, 1) == size(indices, 1) == n
+        && size(A, 2) == size(indices, 2)
     )
         error("""
         Dimension mismatch. 
         Input matrix U_lower must have size (n, k); 
         Input matrix U_upper must have size (n, k); 
         Input matrix A must have size (n, m);
-        Input matrix indices must have size (n, m);
-        Input matrix indices_presolved must have size (n, m).""")
+        Input matrix indices must have size (n, m).""")
     end
 
     (n, k) = size(U_lower)
     (n, m) = size(A)
 
-    if solver == "Mosek"
-        model = Model(Mosek.Optimizer)
-        if solver_output == 0
-            set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
-        end
-        set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
-    elseif solver == "SCS"
-        model = Model(SCS.Optimizer)
-        set_optimizer_attribute(model, "eps_rel", SCS_eps_rel)
-        set_optimizer_attribute(model, "eps_abs", SCS_eps_abs)
-        set_optimizer_attribute(model, "eps_infeas", SCS_eps_infeas)
-    else
-        error("Solver = $solver not recognized.")
+    model = Model(Mosek.Optimizer)
+    if solver_output == 0
+        set_optimizer_attribute(model, "MSK_IPAR_LOG", 0)
     end
+    set_optimizer_attribute(model, "MSK_IPAR_NUM_THREADS", 1)
+    set_optimizer_attribute(model, "MSK_IPAR_MAX_NUM_WARNINGS", 0)
+
     set_time_limit_sec(model, time_limit)
 
     if add_Shor_valid_inequalities && k > 1
         @variable(model, Xt[1:k, 1:n, 1:m])
-        if solver == "SCS" && use_FOM_warm_start
-            set_start_value.(Xt, FOM_warm_start_results["Xt"])
-        end
         @expression(model, X[i=1:n, j=1:m], sum(Xt[:,i,j]))
     else
         @variable(model, X[1:n, 1:m])
-        if solver == "SCS" && use_FOM_warm_start
-            set_start_value.(X, FOM_warm_start_results["X"])
-        end
     end
     @variable(model, Y[1:n, 1:n], Symmetric)
     @variable(model, Θ[1:m, 1:m], Symmetric)
     @variable(model, U[1:n, 1:k])
-    if solver == "SCS" && use_FOM_warm_start
-        set_start_value.(Y, FOM_warm_start_results["Y"])
-        set_start_value.(Θ, FOM_warm_start_results["Θ"])
-        set_start_value.(U, FOM_warm_start_results["U"])
-    end
     if !use_disjunctive_cuts
         @variable(model, t[1:n, 1:k, 1:k])
-        if solver == "SCS" && use_FOM_warm_start
-            set_start_value.(t, FOM_warm_start_results["t"])
-        end
     end
     if add_Shor_valid_inequalities
-        # FIXME: what does warm-starting mean for this?
         @variable(model, W[1:n, 1:m] ≥ 0)
         Shor_constraints_coords = unique(vcat(
             [
                 [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
-                for (i1, i2, j1, j2) in Shor_constraints_indexes
+                for (i1, i2, j1, j2) in node.Shor_info.constraints_indexes
             ]...
         ))
         Shor_constraints_coords_i = sort(unique([x[1] for x in Shor_constraints_coords]))
@@ -1640,15 +1513,15 @@ function relax_frob_matrixcomp(
         if k == 1
             @variable(model, V1[
                 Shor_constraints_coords_i, 
-                [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
+                [tuple(x...) for x in Combinatorics.combinations(Shor_constraints_coords_j, 2)]
             ])
             @variable(model, V2[
-                [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
+                [tuple(x...) for x in Combinatorics.combinations(Shor_constraints_coords_i, 2)], 
                 Shor_constraints_coords_j
             ])
             @variable(model, V3[
-                [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
-                [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
+                [tuple(x...) for x in Combinatorics.combinations(Shor_constraints_coords_i, 2)], 
+                [tuple(x...) for x in Combinatorics.combinations(Shor_constraints_coords_j, 2)]
             ])
         else
             # Generate only some Wt, H, V
@@ -1657,38 +1530,24 @@ function relax_frob_matrixcomp(
                 Shor_constraints_coords
             ] ≥ 0)
             @variable(model, H[
-                [tuple(x...) for x in combinations(1:k, 2)], 
+                [tuple(x...) for x in Combinatorics.combinations(1:k, 2)], 
                 Shor_constraints_coords
             ])
             @variable(model, V1[
                 1:k, 
                 Shor_constraints_coords_i, 
-                [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
+                [tuple(x...) for x in Combinatorics.combinations(Shor_constraints_coords_j, 2)]
             ])
             @variable(model, V2[
                 1:k, 
-                [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
+                [tuple(x...) for x in Combinatorics.combinations(Shor_constraints_coords_i, 2)], 
                 Shor_constraints_coords_j
             ])
             @variable(model, V3[
                 1:k, 
-                [tuple(x...) for x in combinations(Shor_constraints_coords_i, 2)], 
-                [tuple(x...) for x in combinations(Shor_constraints_coords_j, 2)]
+                [tuple(x...) for x in Combinatorics.combinations(Shor_constraints_coords_i, 2)], 
+                [tuple(x...) for x in Combinatorics.combinations(Shor_constraints_coords_j, 2)]
             ])
-        end
-    end
-
-    # If noiseless, coupling constraints between X and A
-    if !noise
-        cons_noiseless = Dict{Tuple{Int, Int}, Any}()
-        for i in 1:n, j in 1:m
-            if indices_presolved[i,j]
-                cons_noiseless[(i,j)] = @constraint(model, X[i,j] == A[i,j])
-                if solver == "SCS" && use_FOM_warm_start
-                    set_start_value(cons_noiseless[(i,j)], FOM_warm_start_results["cons_noiseless"][(i,j)])
-                    set_dual_start_value(cons_noiseless[(i,j)], FOM_warm_start_results["cons_noiseless_dual"][(i,j)])
-                end
-            end
         end
     end
 
@@ -1701,81 +1560,128 @@ function relax_frob_matrixcomp(
     # Lower bounds and upper bounds on U
     @constraint(model, cons_U_box[i=1:n, j=1:k], U_lower[i,j] ≤ U[i,j] ≤ U_upper[i,j])
 
-    if solver == "SCS" && use_FOM_warm_start
-        set_start_value(cons_Y_X_Θ_PSD, FOM_warm_start_results["cons_Y_X_Θ_PSD"])
-        set_start_value(cons_Y_U_I_PSD, FOM_warm_start_results["cons_Y_U_I_PSD"])
-        set_start_value(cons_I_Y_PSD, FOM_warm_start_results["cons_I_Y_PSD"])
-        set_start_value(cons_Y_trace, FOM_warm_start_results["cons_Y_trace"])
-        set_start_value.(cons_U_box, FOM_warm_start_results["cons_U_box"])
-        set_dual_start_value(cons_Y_X_Θ_PSD, FOM_warm_start_results["cons_Y_X_Θ_PSD_dual"])
-        set_dual_start_value(cons_Y_U_I_PSD, FOM_warm_start_results["cons_Y_U_I_PSD_dual"])
-        set_dual_start_value(cons_I_Y_PSD, FOM_warm_start_results["cons_I_Y_PSD_dual"])
-        set_dual_start_value(cons_Y_trace, FOM_warm_start_results["cons_Y_trace_dual"])
-        set_dual_start_value.(cons_U_box, FOM_warm_start_results["cons_U_box_dual"])
-    end
-
     # matrix cuts on U, if supplied
-    if use_disjunctive_cuts && length(matrix_cuts) > 0
-        for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
+    if use_disjunctive_cuts && length(node.disjunctive_cuts.cuts) > 0
+        linear_disjunctive_all_constraints = Dict{String, Any}[]
+        L = length(node.disjunctive_cuts.cuts)
+        for (l, (breakpoint_vec, Û, directions)) in enumerate(node.disjunctive_cuts.cuts)
+            linear_disjunctive_constraints = Dict{String, Any}()
+            linear_disjunctive_constraints["v_LB"] = ConstraintRef[]
+            linear_disjunctive_constraints["v_UB"] = ConstraintRef[]
+
             # stores (each part of) the RHS of the linear inequality in U and Y
             expressions = zeros(AffExpr, k)
 
             # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
-            v = @variable(model, [1:k]) # stores each U[:,t]' * x[:,t]
-            @constraint(model, v .== U' * breakpoint_vec)
+            v = @expression(model, U' * breakpoint_vec) # stores each U[:,t]' * x[:,t]
             v̂ = Û' * breakpoint_vec        # stores fitted version: each Ű[:,t]' * x[:,t]   
             
             # Constraints linking v to breakpoints
             for j in 1:k
                 if disjunctive_cuts_type == "linear"
                     if directions[j] == "left"
-                        @constraint(model, -1 ≤ v[j])
-                        @constraint(model, v[j] ≤ v̂[j])
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, -1 ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ v̂[j])
+                        )
                         expressions[j] = @expression(model, - v[j] + v̂[j] * v[j] + v̂[j])
                     elseif directions[j] == "right"
-                        @constraint(model, v̂[j] ≤ v[j])
-                        @constraint(model, v[j] ≤ 1)
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, v̂[j] ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ 1)
+                        )
                         expressions[j] = @expression(model, + v[j] + v̂[j] * v[j] - v̂[j])
                     end
                 elseif disjunctive_cuts_type == "linear2"
                     if directions[j] == "left"
-                        @constraint(model, -1 ≤ v[j])
-                        @constraint(model, v[j] ≤ - abs(v̂[j]))
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, -1 ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ - abs(v̂[j]))
+                        )
                         expressions[j] = @expression(model, - v[j] - abs(v̂[j]) * v[j] - abs(v̂[j]))
                     elseif directions[j] == "middle"
-                        @constraint(model, - abs(v̂[j]) ≤ v[j])
-                        @constraint(model, v[j] ≤ abs(v̂[j]))
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, - abs(v̂[j]) ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ abs(v̂[j]))
+                        )
                         expressions[j] = @expression(model, (v̂[j])^2)
                     elseif directions[j] == "right"
-                        @constraint(model, abs(v̂[j]) ≤ v[j])
-                        @constraint(model, v[j] ≤ 1)
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, abs(v̂[j]) ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ 1)
+                        )
                         expressions[j] = @expression(model, + v[j] + abs(v̂[j]) * v[j] - abs(v̂[j]))
                     end
                 elseif disjunctive_cuts_type == "linear3"
                     if directions[j] == "left"
-                        @constraint(model, -1 ≤ v[j])
-                        @constraint(model, v[j] ≤ - abs(v̂[j]))
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, -1 ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ - abs(v̂[j]))
+                        )
                         expressions[j] = @expression(model, - v[j] - abs(v̂[j]) * v[j] - abs(v̂[j]))
                     elseif directions[j] == "inner_left"
-                        @constraint(model, - abs(v̂[j]) ≤ v[j])
-                        @constraint(model, v[j] ≤ 0)
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, - abs(v̂[j]) ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ 0)
+                        )
                         expressions[j] = @expression(model, - abs(v̂[j]) * v[j])
                     elseif directions[j] == "inner_right"
-                        @constraint(model, 0 ≤ v[j])
-                        @constraint(model, v[j] ≤ abs(v̂[j]))
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, 0 ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ abs(v̂[j]))
+                        )
                         expressions[j] = @expression(model, abs(v̂[j]) * v[j])
                     elseif directions[j] == "right"
-                        @constraint(model, abs(v̂[j]) ≤ v[j])
-                        @constraint(model, v[j] ≤ 1)
+                        push!(
+                            linear_disjunctive_constraints["v_LB"],
+                            @constraint(model, abs(v̂[j]) ≤ v[j])
+                        )
+                        push!(
+                            linear_disjunctive_constraints["v_UB"],
+                            @constraint(model, v[j] ≤ 1)
+                        )
                         expressions[j] = @expression(model, abs(v̂[j]) * v[j])
                     end
                 end
             end
             # aggregated constraint
-            @constraint(
+            linear_disjunctive_constraints["cut"] = @constraint(
                 model,
                 sum(expressions) ≥ LinearAlgebra.dot(Y, breakpoint_vec * breakpoint_vec'),
             )
+            push!(linear_disjunctive_all_constraints, linear_disjunctive_constraints)
         end
     elseif !use_disjunctive_cuts
         # McCormick inequalities at U_lower and U_upper here
@@ -1846,31 +1752,9 @@ function relax_frob_matrixcomp(
         )
     end
 
-    if !noise && add_basis_pursuit_valid_inequalities
-        for (R, C, type, ind) in linear_coupling_constraints_indexes
-            if type == "col"
-                @constraint(
-                    model, 
-                    sum(
-                        (-1)^i * X[R[i],ind] * det(A[setdiff(R,R[i]),setdiff(C,ind)])
-                        for i in 1:(k+1)
-                    ) == 0
-                )
-            elseif type == "row"
-                @constraint(
-                    model, 
-                    sum(
-                        (-1)^i * X[ind,C[i]] * det(A[setdiff(R,ind),setdiff(C,C[i])])
-                        for i in 1:(k+1)
-                    ) == 0
-                )
-            end
-        end
-    end
-
     if add_Shor_valid_inequalities
         if k == 1
-            for (i,j) in Shor_SOC_constraints_indexes
+            for (i,j) in node.Shor_info.SOC_constraints_indexes
                 @constraint(
                     model,
                     [0.5, W[i,j], X[i,j]] in RotatedSecondOrderCone() 
@@ -1881,7 +1765,7 @@ function relax_frob_matrixcomp(
                 [j=1:m],
                 Θ[j,j] == sum(W[i,j] for i in 1:n)
             )
-            for (i1, i2, j1, j2) in Shor_constraints_indexes
+            for (i1, i2, j1, j2) in node.Shor_info.constraints_indexes
                 @constraint(
                     model, 
                     LinearAlgebra.Symmetric([
@@ -1894,7 +1778,7 @@ function relax_frob_matrixcomp(
                 )
             end
         else
-            for (i,j) in Shor_SOC_constraints_indexes
+            for (i,j) in node.Shor_info.SOC_constraints_indexes
                 @constraint(
                     model,
                     [0.5, W[i,j], X[i,j]] in RotatedSecondOrderCone() 
@@ -1910,7 +1794,7 @@ function relax_frob_matrixcomp(
                 [j=1:m],
                 Θ[j,j] == sum(W[i,j] for i in 1:n)
             )
-            for (i1, i2, j1, j2) in Shor_constraints_indexes
+            for (i1, i2, j1, j2) in node.Shor_info.constraints_indexes
                 @constraint(
                     model, 
                     [t=1:k],
@@ -1931,7 +1815,7 @@ function relax_frob_matrixcomp(
                     XWH_matrix[i,j,1,t+1] = Xt[t,i,j]
                     XWH_matrix[i,j,t+1,t+1] = Wt[t,(i,j)]
                 end
-                for (t1, t2) in combinations(1:k, 2)
+                for (t1, t2) in Combinatorics.combinations(1:k, 2)
                     XWH_matrix[i,j,t1+1,t2+1] = H[(t1,t2),(i,j)]
                     XWH_matrix[i,j,t2+1,t1+1] = H[(t1,t2),(i,j)]
                 end
@@ -1949,42 +1833,27 @@ function relax_frob_matrixcomp(
         cons_U_columns[j = 1:k],
         [1; U[:,j]] in SecondOrderCone()
     )
-    if solver == "SCS" && use_FOM_warm_start
-        set_start_value.(cons_U_columns, FOM_warm_start_results["cons_U_columns"])
-        set_dual_start_value.(cons_U_columns, FOM_warm_start_results["cons_U_columns_dual"])
-    end
 
-    if !noise
+    if add_Shor_valid_inequalities
         @objective(
             model,
             Min,
-            (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m)
-            + λ * sum(Y[i, i] for i = 1:n)
+            (1 / 2) * sum(
+                (A[i,j]^2 - 2 * A[i,j] * X[i,j] + W[i,j]) * indices[i, j] 
+                for i = 1:n, j = 1:m
+            ) 
+            + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
         )
     else
-        if add_Shor_valid_inequalities
-            @objective(
-                model,
-                Min,
-                (1 / 2) * sum(
-                    (A[i,j]^2 - 2 * A[i,j] * X[i,j] + W[i,j]) * indices[i, j] 
-                    for i = 1:n, j = 1:m
-                ) 
-                + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
-                + λ * sum(Y[i, i] for i = 1:n)
-            )
-        else
-            @objective(
-                model,
-                Min,
-                (1 / 2) * sum(
-                    (A[i,j] - X[i,j])^2 * indices[i, j] 
-                    for i = 1:n, j = 1:m
-                ) 
-                + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
-                + λ * sum(Y[i, i] for i = 1:n)
-            )
-        end
+        @objective(
+            model,
+            Min,
+            (1 / 2) * sum(
+                (A[i,j] - X[i,j])^2 * indices[i, j] 
+                for i = 1:n, j = 1:m
+            ) 
+            + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
+        )
     end
 
     optimize!(model)
@@ -2009,25 +1878,22 @@ function relax_frob_matrixcomp(
     )
         results["feasible"] = true
         # recompute objective value manually
-        if !noise && add_Shor_valid_inequalities
-            results["objective"] = compute_relax_objective(
+        if add_Shor_valid_inequalities
+            results["objective"] = compute_SDP_relaxation_objective(
                 value.(X), value.(Y), value.(Θ), value.(U),
-                A, indices, γ, λ,
+                A, indices, γ, 
                 ;
-                noise = false,
                 add_Shor_valid_inequalities = true,
                 W = value.(W),
             )
         else
-            results["objective"] = compute_relax_objective(
+            results["objective"] = compute_SDP_relaxation_objective(
                 value.(X), value.(Y), value.(Θ), value.(U),
-                A, indices, γ, λ,
+                A, indices, γ, 
                 ;
-                noise = noise,
-                add_Shor_valid_inequalities = add_Shor_valid_inequalities,
+                add_Shor_valid_inequalities = false,
             )
         end
-        results["α"] = compute_α(value.(Y), γ, A, indices)
         results["Y"] = value.(Y)
         results["U"] = value.(U)
         results["X"] = value.(X)
@@ -2072,34 +1938,11 @@ function relax_frob_matrixcomp(
         unexpected termination status: $(JuMP.termination_status(model))
         """)
     end
-    if store_FOM_warm_start && results["feasible"]
-        results["cons_Y_X_Θ_PSD"] = value.(cons_Y_X_Θ_PSD)
-        results["cons_Y_U_I_PSD"] = value.(cons_Y_U_I_PSD)
-        results["cons_I_Y_PSD"] = value.(cons_I_Y_PSD)
-        results["cons_Y_trace"] = value.(cons_Y_trace)
-        results["cons_U_box"] = value.(cons_U_box)
-        results["cons_U_columns"] = value.(cons_U_columns)
-        results["cons_Y_X_Θ_PSD_dual"] = dual.(cons_Y_X_Θ_PSD)
-        results["cons_Y_U_I_PSD_dual"] = dual.(cons_Y_U_I_PSD)
-        results["cons_I_Y_PSD_dual"] = dual.(cons_I_Y_PSD)
-        results["cons_Y_trace_dual"] = dual.(cons_Y_trace)
-        results["cons_U_box_dual"] = dual.(cons_U_box)
-        results["cons_U_columns_dual"] = dual.(cons_U_columns)
-        if !noise
-            results["cons_noiseless"] = Dict(
-                (i,j) => value(cons_noiseless[(i,j)])
-                for i in 1:n, j in 1:m if indices_presolved[i,j]
-            )
-            results["cons_noiseless_dual"] = Dict(
-                (i,j) => dual(cons_noiseless[(i,j)])
-                for i in 1:n, j in 1:m if indices_presolved[i,j]
-            )
-        end
-    end
+
     return results
 end
 
-function compute_relax_objective(
+function compute_SDP_relaxation_objective(
     X::Matrix{Float64},
     Y::Matrix{Float64},
     Θ::Matrix{Float64},
@@ -2107,39 +1950,29 @@ function compute_relax_objective(
     A::Matrix{Float64},
     indices::BitMatrix,
     γ::Float64,
-    λ::Float64,
     ;
-    noise::Bool = true,
     add_Shor_valid_inequalities::Bool = false,
     W::Matrix{Float64} = zeros(size(X)),
 )
     (n, k) = size(U)
     (n, m) = size(A)
-    if !noise
+
+    if add_Shor_valid_inequalities
         return (
-            (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m)
-            + λ * sum(Y[i, i] for i = 1:n)
+            (1 / 2) * sum(
+                (A[i,j]^2 - 2 * A[i,j] * X[i,j] + W[i,j]) * indices[i, j] 
+                for i = 1:n, j = 1:m
+            ) 
+            + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
         )
     else
-        if add_Shor_valid_inequalities
-            return (
-                (1 / 2) * sum(
-                    (A[i,j]^2 - 2 * A[i,j] * X[i,j] + W[i,j]) * indices[i, j] 
-                    for i = 1:n, j = 1:m
-                ) 
-                + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
-                + λ * sum(Y[i, i] for i = 1:n)
-            )
-        else
-            return (
-                (1 / 2) * sum(
-                    (A[i,j] - X[i,j])^2 * indices[i, j] 
-                    for i = 1:n, j = 1:m
-                ) 
-                + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
-                + λ * sum(Y[i, i] for i = 1:n)
-            )
-        end
+        return (
+            (1 / 2) * sum(
+                (A[i,j] - X[i,j])^2 * indices[i, j] 
+                for i = 1:n, j = 1:m
+            ) 
+            + (1 / (2 * γ)) * sum(Θ[i, i] for i = 1:m) 
+        )
     end
 end
 
@@ -2149,7 +1982,6 @@ function alternating_minimization(
     k::Int,
     indices::BitMatrix,
     γ::Float64,
-    λ::Float64,
     use_disjunctive_cuts::Bool,
     ;
     disjunctive_cuts_type::Union{String, Nothing} = nothing,
@@ -2162,11 +1994,12 @@ function alternating_minimization(
         U_lower
     end,
     U_upper::Array{Float64,2} = ones(n,k),
-    matrix_cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[],
+    disjunctive_cuts::Vector{Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}} = Tuple{Vector{Float64}, Matrix{Float64}, Vector{String}}[],
     ϵ::Float64 = 1e-5,
     orthogonality_tolerance::Float64 = 1e-8,
     max_iters::Int = 100,
     time_limit::Int = 3600,
+    solver_output::Int = 0,
 )
     # Note: only used in the noisy case
     altmin_start_time = time()
@@ -2179,7 +2012,12 @@ function alternating_minimization(
     objective_current = 1e10
 
     model_U = Model(Mosek.Optimizer)
-    set_silent(model_U)
+    if solver_output == 0
+        set_optimizer_attribute(model_U, "MSK_IPAR_LOG", 0)
+    end
+    set_optimizer_attribute(model_U, "MSK_IPAR_NUM_THREADS", 1)
+    set_optimizer_attribute(model_U, "MSK_IPAR_MAX_NUM_WARNINGS", 0)
+    
     @variable(model_U, U[1:n, 1:k])
     @variable(model_U, t[1:n, 1:n, 1:k])
 
@@ -2207,8 +2045,8 @@ function alternating_minimization(
         )
 
         # Linear constraints on U due to disjunctions
-        if length(matrix_cuts) > 0
-            for (l, (breakpoint_vec, Û, directions)) in enumerate(matrix_cuts)
+        if length(disjunctive_cuts) > 0
+            for (l, (breakpoint_vec, Û, directions)) in enumerate(disjunctive_cuts)
                 # Constraints linking v (or w) to previous fitted Us and breakpoint vectors
                 v = @variable(model_U, [1:k]) # stores each U[:,t]' * x[:,t]
                 @constraint(model_U, v .== U' * breakpoint_vec)
@@ -2333,10 +2171,15 @@ function alternating_minimization(
     )
     
     model_V = Model(Mosek.Optimizer)
-    set_silent(model_V)
+    if solver_output == 0
+        set_optimizer_attribute(model_V, "MSK_IPAR_LOG", 0)
+    end
+    set_optimizer_attribute(model_V, "MSK_IPAR_NUM_THREADS", 1)
+    set_optimizer_attribute(model_V, "MSK_IPAR_MAX_NUM_WARNINGS", 0)
+
     @variable(model_V, V[1:k, 1:m])
 
-    objectives = []
+    objectives = Float64[]
     converged = false
     U_new = zeros(n, k)
     V_new = zeros(k, m)
@@ -2386,7 +2229,7 @@ function alternating_minimization(
         U_new = value.(model_U[:U])
 
         try
-            objective_new = objective_value(model_U)
+            objective_new = JuMP.objective_value(model_U)
             push!(objectives, objective_new)
             objective_diff = abs((objective_new - objective_current) / objective_current)
             if objective_diff < ϵ # objectives don't oscillate!
@@ -2409,6 +2252,8 @@ function alternating_minimization(
                     "V" => V_new,
                     "solve_time" => (altmin_end_time - altmin_start_time),
                     "n_iters" => counter,
+                    "max_iters" => max_iters,
+                    "objectives" => objectives,
                 )
             end
 
@@ -2428,7 +2273,58 @@ function alternating_minimization(
         "V" => V_new, 
         "solve_time" => (altmin_end_time - altmin_start_time),
         "n_iters" => counter,
+        "max_iters" => max_iters,
+        "objectives" => objectives,
     )
+end
+
+function alternating_minimization_printout(
+    printlist::Vector{String},
+    altmin_results::Dict{String, Any},
+    node_id::Int,
+    altmin_probability::Float64,
+    verbosity::Int,
+)
+    if altmin_results["converged"]
+        (verbosity ≥ 2) && add_message!(printlist, [
+            @sprintf(
+                "    Altmin at node %5d (w.p. %.3f) converged        in %3d / %3d iterations: %5.2f seconds.\n",
+                node_id,
+                altmin_probability,
+                altmin_results["n_iters"],
+                altmin_results["max_iters"],
+                altmin_results["solve_time"],
+            )
+        ])
+    else
+        (verbosity ≥ 2) && add_message!(printlist, [
+            @sprintf(
+                "    Altmin at node %5d (w.p. %.3f) did not converge in %3d / %3d iterations: %5.2f seconds.\n",
+                node_id,
+                altmin_probability,
+                altmin_results["n_iters"],
+                altmin_results["max_iters"],
+                altmin_results["solve_time"],
+            )
+        ])
+    end
+    if length(altmin_results["objectives"]) > 5
+        obj_values_print = altmin_results["objectives"][end-5:end]
+    else
+        obj_values_print = altmin_results["objectives"]
+    end
+    (verbosity ≥ 2) && add_message!(printlist, [
+        @sprintf(
+            "    Objective values:      %s\n",
+            join(
+                [
+                    @sprintf("%.4e", obj) for obj in obj_values_print
+                ],
+                ", "
+            ),
+        ),
+        "\n",
+    ])
 end
 
 function evaluate_objective(
@@ -2437,8 +2333,6 @@ function evaluate_objective(
     indices::BitMatrix,
     U::Array{Float64,2},
     γ::Float64,
-    λ::Float64,
-    noise::Bool,
 )
     if !(
         size(X) == size(A) == size(indices) 
@@ -2454,21 +2348,14 @@ function evaluate_objective(
     end
     n, m = size(X)
     n, k = size(U)
-    if !noise
-        return (
-            (1 / (2 * γ)) * sum(X.^2)
-            + λ * sum(U.^2)
+
+    return (
+        (1 / 2) * sum(
+            (X[i,j] - A[i,j])^2 * indices[i,j]
+            for i = 1:n, j = 1:m
         )
-    else
-        return (
-            (1 / 2) * sum(
-                (X[i,j] - A[i,j])^2 * indices[i,j]
-                for i = 1:n, j = 1:m
-            )
-            + (1 / (2 * γ)) * sum(X.^2)
-            + λ * sum(U.^2)
-        )
-    end
+        + (1 / (2 * γ)) * sum(X.^2)
+    )
 end
 
 """
@@ -2534,7 +2421,7 @@ function create_matrix_cut_child_nodes(
     Shor_valid_inequalities_noisy_rank1_num_entries_present::Vector{Int} = [4],
     n_minors::Union{Int, Nothing} = 100,
 )
-    # matrix_cuts is a vector of tuples: each containing:
+    # disjunctive_cuts is a vector of tuples: each containing:
     # 1. breakpoint_vec: (n,) vector which is negative w.r.t. U U' - Y
     # 2. U: (n, k): previous fitted version of Û
     # 3. (if disjunctive_cuts_type == "linear") 
@@ -2603,509 +2490,56 @@ function create_matrix_cut_child_nodes(
                 Iterators.product(repeat([["left", "inner_left", "inner_right", "right"]], k)...)
             )
         end
+    end
+
+    if update_Shor_indices_flag
+        minors = generate_violated_Shor_minors(
+            reshape(X, (1, n, m)), 
+            indices,
+            Shor_valid_inequalities_noisy_rank1_num_entries_present,
+            node.Shor_info.constraints_indexes,
+            n_minors,
+        )
+        new_Shor_constraints_indexes = [m[2] for m in minors]
+        Shor_constraints_indexes = union(
+            node.Shor_info.constraints_indexes,
+            new_Shor_constraints_indexes
+        )
+        Shor_non_SOC_constraints_indexes = unique(vcat(
+            [
+                [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
+                for (i1, i2, j1, j2) in Shor_constraints_indexes
+            ]...
+        ))
+        Shor_SOC_constraints_indexes = setdiff(
+            node.Shor_info.SOC_constraints_indexes, 
+            Shor_non_SOC_constraints_indexes
+        )
+    end
+
+    matrix_cut_child_nodes = BBNode[]
+    for (ind, directions) in directions_list
+        new_disjunctive_cuts = vcat(node.disjunctive_cuts.cuts, [(breakpoint_vec, U, collect(directions))])
+        new_node = BBNode(
+            node_id = counter + ind,
+            parent_id = node.node_id,
+            U_lower = node.U_lower,
+            U_upper = node.U_upper,
+            LB = objective_relax,
+            depth = node.depth + 1,
+            disjunctive_cuts = BBNodeDisjunctiveCuts(cuts=new_disjunctive_cuts),
+        )
         if update_Shor_indices_flag
-            minors = generate_violated_Shor_minors(
-                reshape(X, (1, n, m)), 
-                indices,
-                Shor_valid_inequalities_noisy_rank1_num_entries_present,
-                node.Shor_constraints_indexes,
-                n_minors,
-            )
-            new_Shor_constraints_indexes = [m[2] for m in minors]
-            Shor_constraints_indexes = union(
-                node.Shor_constraints_indexes,
-                new_Shor_constraints_indexes
-            )
-            Shor_non_SOC_constraints_indexes = unique(vcat(
-                [
-                    [(i1,j1), (i1,j2), (i2,j1), (i2,j2)]
-                    for (i1, i2, j1, j2) in Shor_constraints_indexes
-                ]...
-            ))
-            Shor_SOC_constraints_indexes = setdiff(
-                node.Shor_SOC_constraints_indexes, 
-                Shor_non_SOC_constraints_indexes
+            new_node.Shor_info = BBNodeShorInfo(
+                constraints_indexes = Shor_constraints_indexes,
+                SOC_constraints_indexes = Shor_SOC_constraints_indexes,
             )
         else
-            Shor_constraints_indexes = node.Shor_constraints_indexes
-            Shor_SOC_constraints_indexes = node.Shor_SOC_constraints_indexes
+            new_node.Shor_info = node.Shor_info
         end
-        return (
-            BBNode(
-                U_lower = node.U_lower,
-                U_upper = node.U_upper,
-                matrix_cuts = vcat(node.matrix_cuts, [(breakpoint_vec, U, collect(directions))]),
-                # initialize a node's LB with the objective of relaxation of parent
-                LB = objective_relax,
-                depth = node.depth + 1,
-                node_id = counter + ind,
-                parent_id = node.node_id,
-                linear_coupling_constraints_indexes = node.linear_coupling_constraints_indexes,
-                Shor_constraints_indexes = Shor_constraints_indexes,
-                Shor_SOC_constraints_indexes = Shor_SOC_constraints_indexes,
-                FOM_warm_start_results = relax_result,
-            )
-            for (ind, directions) in directions_list
-        )
+        push!(matrix_cut_child_nodes, new_node)
     end
-end
-
-function rank1_presolve(
-    indices::BitMatrix,
-    A::Array{Float64, 2},
-)
-    indices_presolved = copy(indices)
-    (n, m) = size(indices)
-    X_presolved = zeros(Float64, (n, m))
-    X_presolved[indices] = A[indices]
-
-    for j0 in 1:m
-        selected_rows = findall(indices_presolved[:,j0])
-        if length(selected_rows) > 1
-            rows_or = any(indices_presolved[selected_rows, :], dims=1)
-            for j in findall(vec(rows_or))
-                if j == j0
-                    continue
-                end
-                i0 = selected_rows[findfirst(indices_presolved[selected_rows, j])]
-                for i in selected_rows
-                    if i == i0
-                        continue
-                    end
-                    if !indices_presolved[i,j]
-                        X_presolved[i,j] = X_presolved[i,j0] * X_presolved[i0,j] / X_presolved[i0,j0]
-                        indices_presolved[i,j] = true
-                    end
-                end
-            end
-        end
-    end
-
-    return indices_presolved, X_presolved
-end
-
-function rank2_presolve(
-    indices::BitMatrix,
-    A::Array{Float64, 2},
-)
-    indices_presolved = copy(indices)
-    (n, m) = size(indices)
-    X_presolved = zeros(Float64, (n, m))
-    X_presolved[indices] = A[indices]
-    current_sum = sum(indices_presolved)
-
-    while true
-        for (j0, j1) in combinations(1:m, 2)
-            selected_rows = findall(indices_presolved[:,j0] .& indices_presolved[:,j1])
-            if length(selected_rows) ≤ 2
-                continue
-            end
-            for j2 in setdiff(1:m, [j0, j1])
-                filled_rows = selected_rows[findall(indices_presolved[selected_rows, j2])]
-                if !(2 ≤ length(filled_rows) < length(selected_rows))
-                    continue
-                end
-                (i0, i1) = filled_rows[1:2]
-                for i2 in setdiff(selected_rows, filled_rows)
-                    X_presolved[i2,j2] = (
-                        X_presolved[i0,j0] * X_presolved[i1,j2] * X_presolved[i2,j1] 
-                        + X_presolved[i0,j2] * X_presolved[i1,j1] * X_presolved[i2,j0] 
-                        - X_presolved[i0,j1] * X_presolved[i1,j2] * X_presolved[i2,j0] 
-                        - X_presolved[i0,j2] * X_presolved[i1,j0] * X_presolved[i2,j1] 
-                    ) / (
-                        X_presolved[i0,j0] * X_presolved[i1,j1] 
-                        - X_presolved[i0,j1] * X_presolved[i1,j0]
-                    )
-                    indices_presolved[i2,j2] = true
-                end
-            end
-        end
-        if current_sum == sum(indices_presolved)
-            break
-        else
-            current_sum = sum(indices_presolved)
-        end
-    end
-    return indices_presolved, X_presolved
-end
-
-function rankk_presolve(
-    indices::BitMatrix,
-    A::Array{Float64, 2},
-    k::Int,
-)
-    indices_presolved = copy(indices)
-    (n, m) = size(indices)
-    X_presolved = zeros(Float64, (n, m))
-    X_presolved[indices] = A[indices]
-    current_sum = sum(indices_presolved)
-
-    while true
-        for C in combinations(1:m, k)
-            selected_rows = findall(vec(all(indices_presolved[:,C], dims=2)))
-            if length(selected_rows) ≤ k
-                continue
-            end
-            for j in setdiff(1:m, C)
-                filled_rows = selected_rows[
-                    findall(indices_presolved[selected_rows, j])
-                ]
-                if !(k ≤ length(filled_rows) < length(selected_rows))
-                    continue
-                end
-                R = filled_rows[1:k]
-                for i in setdiff(selected_rows, filled_rows)
-                    r_ind = searchsortedfirst(R, i) - 1
-                    R_top = R[1:r_ind]
-                    R_bot = R[r_ind+1:end]
-                    cumsum = 0
-                    for ind in 1:r_ind
-                        cumsum += (-1)^(ind-1) * X_presolved[R[r_ind+1-ind],j] * det(X_presolved[union(setdiff(R_top, R_top[r_ind+1-ind]), i, R_bot),collect(C)])
-                    end
-                    for ind in 1:k-r_ind
-                        cumsum += (-1)^(ind-1) * X_presolved[R[r_ind+ind],j] * det(X_presolved[union(R_top, i, setdiff(R_bot, R_bot[ind]), i),collect(C)])
-                    end
-                    X_presolved[i,j] = cumsum / det(X_presolved[R,collect(C)])
-                    indices_presolved[i,j] = true
-                end
-            end
-        end
-        if current_sum == sum(indices_presolved)
-            break
-        else
-            current_sum = sum(indices_presolved)
-        end
-    end
-    return indices_presolved, X_presolved
-end
-
-function generate_rank1_basis_pursuit_linear_coupling_constraints_indexes(
-    indices_presolved::BitMatrix, # for coupling constraints, in the noiseless case
-)
-    # Used in basis pursuit: linear inequalities in rank-1
-    (n, m) = size(indices_presolved)
-
-    rowp = sortperm([indices_presolved[i,:] for i in 1:n], rev = true)
-    colp = sortperm([indices_presolved[rowp,j] for j in 1:m], rev = true)
-    rowind = unique([findfirst(indices_presolved[rowp, j]) for j in colp])
-    colind = unique([findfirst(indices_presolved[i, colp]) for i in rowp])
-
-    linear_coupling_constraints_indexes = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
-    for block_i in 1:length(rowind), block_j in 1:length(colind)
-        if block_i == block_j
-            continue
-        end
-        i_start = rowind[block_i]
-        i_end = (
-            block_i == length(rowind)
-            ? n
-            : rowind[block_i+1]-1
-        )
-        j_start = colind[block_j]
-        j_end = (
-            block_j == length(colind)
-            ? m
-            : colind[block_j+1]-1
-        )
-        j_ref = colind[block_i]
-        i_ref = rowind[block_j]
-        # (rowp[i_ref], colp[j_start:j_end]) are filled
-        # (rowp[i_start:i_end], colp[j_ref]) are filled
-        if (i_end > i_start)
-            for i in (i_start+1):i_end, j in j_start:j_end
-                if j_ref < j
-                    push!(linear_coupling_constraints_indexes, (
-                        [rowp[i_start], rowp[i]],
-                        [colp[j_ref], colp[j]],
-                        "col",
-                        colp[j],
-                    ))
-                else
-                    push!(linear_coupling_constraints_indexes, (
-                        [rowp[i_start], rowp[i]],
-                        [colp[j], colp[j_ref]],
-                        "col",
-                        colp[j],
-                    ))
-                end
-            end
-        end
-        if (j_end > j_start)
-            for j in (j_start+1):j_end
-                if i_ref < i_start
-                    push!(linear_coupling_constraints_indexes, (
-                        [rowp[i_ref], rowp[i_start]],
-                        [colp[j_start], colp[j]],
-                        "row",
-                        rowp[i_start],
-                    ))
-                else
-                    push!(linear_coupling_constraints_indexes, (
-                        [rowp[i_start], rowp[i_ref]],
-                        [colp[j_start], colp[j]],
-                        "row",
-                        rowp[i_start],
-                    ))
-                end
-            end
-        end
-    end
-
-    return linear_coupling_constraints_indexes
-end
-
-
-function generate_rank2_basis_pursuit_linear_coupling_constraints_indexes(
-    indices_presolved::BitMatrix, # for coupling constraints, in the noiseless case
-)
-    (n, m) = size(indices_presolved)
-
-    constrained_vars_R = [
-        Vector{Int}[] for i in 1:n
-    ]
-    constrained_vars_C = [
-        Vector{Int}[] for j in 1:m
-    ]
-    linear_coupling_constraints_indexes = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
-    for (j0, j1) in combinations(1:m, 2)
-        selected_rows = findall(indices[:,j0] .& indices[:,j1])
-        if length(selected_rows) ≤ 2
-            continue
-        end
-        for j in setdiff(1:m, [j0, j1])
-            C_new = [j0, j1, j]
-            colp = sortperm(C_new)
-            i_choices = findall(indices[:,j0] .& indices[:,j1] .& indices[:,j])
-            if length(i_choices) == 0
-                R_range = [
-                    collect(x) 
-                    for x in Iterators.product(
-                        selected_rows[1:1],
-                        selected_rows[2:2],
-                        selected_rows[3:end],
-                    )
-                ]
-            elseif length(i_choices) == 1
-                i = i_choices[1]
-                R_range = [
-                    sort(collect(x))
-                    for x in Iterators.product(
-                        [i],
-                        setdiff(selected_rows, i)[1:1],
-                        setdiff(selected_rows, i)[2:end],
-                    )
-                ]
-            else
-                continue
-            end
-            for R in R_range
-                if R in constrained_vars_C[j]
-                    continue
-                end
-                push!(constrained_vars_C[j], R)
-                push!(linear_coupling_constraints_indexes, (
-                    R, 
-                    C_new[colp],
-                    "col",
-                    j,
-                ))
-            end
-        end
-    end
-
-    for (i0, i1) in combinations(1:m, 2)
-        selected_cols = findall(indices[:,i0] .& indices[:,i1])
-        if length(selected_cols) ≤ 2
-            continue
-        end
-        for i in setdiff(1:n, [i0, i1])
-            R_new = [i0, i1, i]
-            rowp = sortperm(R_new)
-            j_choices = findall(indices[i0,:] .& indices[i1,:] .& indices[i,:])
-            if length(j_choices) == 0
-                C_range = [
-                    collect(x) 
-                    for x in Iterators.product(
-                        selected_cols[1:1],
-                        selected_cols[2:2],
-                        selected_cols[3:end],
-                    )
-                ]
-            elseif length(j_choices) == 1
-                j = j_choices[1]
-                C_range = [
-                    sort(collect(x))
-                    for x in Iterators.product(
-                        [j],
-                        setdiff(selected_cols, j)[1:1],
-                        setdiff(selected_cols, j)[2:end],
-                    )
-                ]
-            else
-                continue
-            end
-            for C in C_range
-                if C in constrained_vars_R[i]
-                    continue
-                end
-                push!(constrained_vars_R[i], C)
-                push!(linear_coupling_constraints_indexes, (
-                    R_new[rowp],
-                    C,
-                    "row",
-                    i,
-                ))
-            end
-        end
-    end
-
-    return linear_coupling_constraints_indexes
-end
-
-function generate_rankk_basis_pursuit_linear_coupling_constraints_indexes(
-    indices_presolved::BitMatrix, # for coupling constraints, in the noiseless case
-    k::Int,
-)
-    (n, m) = size(indices_presolved)
-
-    constrained_vars_R = [
-        Vector{Int}[] for i in 1:n
-    ]
-    constrained_vars_C = [
-        Vector{Int}[] for j in 1:m
-    ]
-    linear_coupling_constraints_indexes = Tuple{Vector{Int}, Vector{Int}, String, Int}[]
-    for C in combinations(1:m, k)
-        selected_rows = findall(vec(all(indices_presolved[:,C], dims=2)))
-        if length(selected_rows) ≤ k
-            continue
-        end
-        for j in setdiff(1:m, C)
-            C_new = vcat(C, j)
-            colp = sortperm(C_new)
-            i_choices = findall(vec(all(indices_presolved[:,C_new], dims=2)))
-            if length(i_choices) ≥ k
-                continue
-            end
-            h = length(i_choices)
-            remaining_rows = setdiff(selected_rows, i_choices)
-            R_range = [
-                sort(collect(x))
-                for x in Iterators.product(
-                    [[x] for x in i_choices]..., # h
-                    [remaining_rows[ind:ind] for ind in 1:(k-h)]..., # k-h
-                    remaining_rows[k-h+1:end],
-                )
-            ]
-            for R in R_range
-                if R in constrained_vars_C[j]
-                    continue
-                end
-                push!(constrained_vars_C[j], R)
-                push!(linear_coupling_constraints_indexes, (
-                    R, 
-                    C_new[colp],
-                    "col",
-                    j,
-                ))
-            end
-        end
-    end
-
-    for R in combinations(1:n, k)
-        selected_cols = findall(vec(all(indices_presolved[R,:], dims=1)))
-        if length(selected_cols) ≤ k
-            continue
-        end
-        for i in setdiff(1:n, R)
-            R_new = vcat(R, i)
-            rowp = sortperm(R_new)
-            j_choices = findall(vec(all(indices_presolved[R_new,:], dims=1)))
-            if length(j_choices) ≥ k
-                continue
-            end
-            h = length(j_choices)
-            remaining_cols = setdiff(selected_cols, j_choices)
-            C_range = [
-                sort(collect(x))
-                for x in Iterators.product(
-                    [[x] for x in j_choices]...,
-                    [remaining_cols[ind:ind] for ind in 1:k-h]...,
-                    remaining_cols[k-h+1:end],
-                )
-            ]
-            for C in C_range
-                if C in constrained_vars_R[i]
-                    continue
-                end
-                push!(constrained_vars_R[i], C)
-                push!(linear_coupling_constraints_indexes, (
-                    R_new[rowp],
-                    C,
-                    "row",
-                    i,
-                ))
-            end
-        end
-    end
-
-    return linear_coupling_constraints_indexes
-end
-
-function generate_rank1_basis_pursuit_Shor_constraints_indexes(
-    indices_presolved::BitMatrix, # for Shor indexes, in the noiseless case
-    num_entries_present::Int = 1 # Only makes sense to have num_entries_present == 1
-)
-    # Used in basis pursuit: Shor LMIs in rank-1
-    (n, m) = size(indices_presolved)
-
-    rowp = sortperm([indices_presolved[i,:] for i in 1:n], rev = true)
-    colp = sortperm([indices_presolved[rowp,j] for j in 1:m], rev = true)
-    rowind = unique([findfirst(indices_presolved[rowp, j]) for j in colp])
-    colind = unique([findfirst(indices_presolved[i, colp]) for i in rowp])
-
-    Shor_constraints_indexes = NTuple{4, Int}[]
-    # One entry present
-    if num_entries_present == 1
-        for block_i1 in 1:(length(rowind)-1), block_i2 in (block_i1+1):length(rowind)
-            i1_start = rowind[block_i1]
-            i1_end = rowind[block_i1+1]-1
-            j_i1_start = colind[block_i1]
-            j_i1_end = colind[block_i1+1]-1
-            i2_start = rowind[block_i2]
-            i2_end = (
-                block_i2 == length(rowind) 
-                ? n
-                : rowind[block_i2+1]-1 
-            )
-            j_i2_start = colind[block_i2]
-            j_i2_end = (
-                block_i2 == length(rowind)
-                ? m
-                : colind[block_i2+1]-1
-            )        
-            for block_j in 1:length(colind)
-                # Ensures that block_j is not equal to either block_i1 or block_i2
-                if block_j in [block_i1, block_i2]
-                    continue
-                end
-                j1_start = colind[block_j]
-                j1_end = (
-                    block_j == length(colind) 
-                    ? m
-                    : colind[block_j+1]-1
-                )
-                append!(
-                    Shor_constraints_indexes,
-                    [
-                        (sort([rowp[i1], rowp[i2]])..., sort([colp[j1], colp[j2]])...)
-                        for i1 in i1_start:i1_end, i2 in i2_start:i2_end, j1 in j1_start:j1_end, j2 in vcat(j_i1_start:j_i1_end, j_i2_start:j_i2_end)
-                    ]
-                )
-            end
-        end
-    end
-    return Shor_constraints_indexes
+    return matrix_cut_child_nodes
 end
 
 function generate_rank1_matrix_completion_Shor_constraints_indexes(
@@ -3119,48 +2553,36 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
 
     for num_entries_present in num_entries_present_list
         if num_entries_present == 4    
-            for (i1, i2) in combinations(1:n, 2)
-                for j1 in 1:(m-1)
-                    if indices[i1,j1] == 1 && indices[i2,j1] == 1
-                        # only looks for j2 after j1, 
-                        # where indices[i1,j2] == indices[i2,j2] == 1
-                        for j2 in findall(indices[i1,(j1+1):end] .& indices[i2,(j1+1):end])
-                            push!(Shor_constraints_indexes, (i1, i2, j1, j1+j2))
-                        end
-                    end
+            for (i1, i2) in Combinatorics.combinations(1:n, 2)
+                for (j1, j2) in Combinatorics.combinations(findall(indices[i1,:] .& indices[i2,:]), 2)
+                    push!(Shor_constraints_indexes, (i1, i2, j1, j2))
                 end
             end
         elseif num_entries_present == 3
-            for (i1, i2) in combinations(1:n, 2)
-                for j1 in 1:m
-                    if indices[i1,j1] == 1 && indices[i2,j1] == 1
-                        # Looks for j2 in 1:n, 
-                        # where indices[i1,j2] + indices[i2,j2] == 1
-                        for j2 in findall(indices[i1,:] .⊻ indices[i2,:])
-                            push!(Shor_constraints_indexes, (i1, i2, sort([j1, j2])...))
-                        end
+            for (i1, i2) in Combinatorics.combinations(1:n, 2)
+                for j1 in findall(indices[i1,:] .& indices[i2,:])
+                    for j2 in findall(indices[i1,:] .⊻ indices[i2,:])
+                        push!(Shor_constraints_indexes, (i1, i2, sort([j1, j2])...))
                     end
                 end
             end
         elseif num_entries_present == 2
             # (a): [1 0; 1 0] and [0 1; 0 1]
-            for (i1, i2) in combinations(1:n, 2)
-                for j1 in 1:m
-                    if indices[i1,j1] == 1 && indices[i2,j1] == 1
-                        for j2 in findall(.~(indices[i1,:] .| indices[i2,:]))
-                            push!(Shor_constraints_indexes, (i1, i2, sort([j1, j2])...))
-                        end
+            for (i1, i2) in Combinatorics.combinations(1:n, 2)
+                for j1 in findall(indices[i1,:] .& indices[i2,:])
+                    for j2 in findall(.~(indices[i1,:] .| indices[i2,:]))
+                        push!(Shor_constraints_indexes, (i1, i2, sort([j1, j2])...))
                     end
                 end
             end
             # (b): all other cases
-            for (i1, i2) in combinations(1:n, 2)
-                for (j1, j2) in combinations(findall(indices[i1,:] .⊻ indices[i2,:]), 2)
+            for (i1, i2) in Combinatorics.combinations(1:n, 2)
+                for (j1, j2) in Combinatorics.combinations(findall(indices[i1,:] .⊻ indices[i2,:]), 2)
                     push!(Shor_constraints_indexes, (i1, i2, j1, j2))
                 end
             end
         elseif num_entries_present == 1
-            for (i1, i2) in combinations(1:n, 2)
+            for (i1, i2) in Combinatorics.combinations(1:n, 2)
                 for j1 in 1:m
                     if indices[i1,j1] + indices[i2,j1] == 1
                         # Looks for j2 in 1:n, 
@@ -3172,7 +2594,7 @@ function generate_rank1_matrix_completion_Shor_constraints_indexes(
                 end
             end
         elseif num_entries_present == 0
-            for (i1, i2) in combinations(1:n, 2)
+            for (i1, i2) in Combinatorics.combinations(1:n, 2)
                 for j1 in 1:(m-1)
                     if indices[i1,j1] == indices[i2,j1] == 0
                         # Looks for j2 in 1:n, 
@@ -3198,11 +2620,6 @@ function generate_violated_Shor_minors(
 )
     (k, n, m) = size(X)
 
-    # minors_indexes = vec(collect(
-    #     (i1, i2, j1, j2)
-    #     for (i1, i2) in combinations(1:n, 2), 
-    #         (j1, j2) in combinations(1:m, 2)
-    # ))
     minors_indexes = generate_rank1_matrix_completion_Shor_constraints_indexes(
         indices, Shor_valid_inequalities_noisy_rank1_num_entries_present,
     )
